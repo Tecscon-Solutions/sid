@@ -98,6 +98,29 @@ function fmtNum0(v) {
   if (!Number.isFinite(n)) return '-';
   return Math.round(n).toLocaleString('en-US');
 }
+/* Download a table as CSV (opens straight in Excel). `rows` is an array of
+   arrays — first row is the header. Values are quoted when needed and the file
+   is BOM-prefixed so Excel reads UTF-8 correctly. The anchor is built in the
+   PARENT document because the app runs inside Streamlit's component iframe. */
+function downloadCsv(rows, filename) {
+  try {
+    const csv = (rows || []).map(r => (r || []).map(c => {
+      const s = c == null ? '' : String(c);
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    let pdoc = document;
+    try { if (window.parent && window.parent.document) pdoc = window.parent.document; } catch (e) { pdoc = document; }
+    const a = pdoc.createElement('a');
+    a.href = url; a.download = filename || 'export.csv'; a.style.display = 'none';
+    pdoc.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { pdoc.body.removeChild(a); } catch (e) {} try { URL.revokeObjectURL(url); } catch (e) {} }, 1500);
+    return true;
+  } catch (e) { console.error('csv export failed', e); return false; }
+}
+
 // Compact, no currency symbol — for the low–high range shown next to a value
 // that already carries the currency (e.g. "186k – 279k" under "AED 233k").
 function fmtShort(v) {
@@ -579,6 +602,6 @@ Object.assign(window, {
   summariseYears, useSupabaseData,
   readCache, writeCache,
   classifyAction, fcAction, fcBal, fcQty,
-  fmtMoney, fmtMoneyShort, fmtNum0, fmtShort, CURRENCY, DirhamSign,
+  fmtMoney, fmtMoneyShort, fmtNum0, fmtShort, CURRENCY, DirhamSign, downloadCsv,
   SearchBox,
 });

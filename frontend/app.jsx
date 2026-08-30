@@ -919,6 +919,30 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
     setTablePage(0);
   };
 
+  // Export what's on screen: every filtered row in the current sort order (not
+  // just the visible page), with the same columns the table shows.
+  const exportCsv = () => {
+    const r0 = (v) => v == null ? '' : Math.round(v);
+    const head = ['Period', 'Item Code', 'Item', 'Pred. Action',
+      ...(hasActuals ? ['Actual Action'] : []),
+      'Prev Bal', 'Pred. Bal',
+      ...(hasActuals ? ['Actual Bal', 'Error', 'APE %'] : []),
+      'Pred. Change', 'Qty', 'MAPE %', 'High Value'];
+    const body = sorted.map(d => {
+      const ape = d.ape != null ? d.ape
+        : (d.error != null && d.actualClosingBal ? Math.abs(d.error / d.actualClosingBal) * 100 : null);
+      return [d.period, d.itemCode, d.description, d.predictedAction,
+        ...(hasActuals ? [d.actualAction || ''] : []),
+        r0(d.prevClosingBal), r0(d.predictedClosingBal),
+        ...(hasActuals ? [r0(d.actualClosingBal), r0(d.error), ape != null ? ape.toFixed(1) : ''] : []),
+        r0(d.difference), r0(d.quantity),
+        d.itemMape != null ? d.itemMape.toFixed(1) : '',
+        d.isHV ? 'Yes' : 'No'];
+    });
+    const stamp = (standalone && periodFilter !== 'All') ? periodFilter : 'all_periods';
+    downloadCsv([head, ...body], `line_items_${stamp}.csv`);
+  };
+
   React.useEffect(() => { setTablePage(0); }, [actionFilter, hvOnly, matchFilter, search, exactItem, periodFilter]);
 
   // Summary stats for toolbar
@@ -1041,10 +1065,16 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
           HV Only
         </label>
 
-        {/* Row count + match summary */}
+        {/* Row count + match summary + export */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--text-2)' }}>
           {hasActuals && <span><span style={{ color: '#059669', fontWeight: 700 }}>{matchCount} ✓</span> · <span style={{ color: '#DC2626', fontWeight: 700 }}>{mismatchCount} ✗</span> direction</span>}
           <span>{filtered.length} of {data.length} rows</span>
+          {/* Same export control as Cash Flow — downloads the filtered rows. */}
+          <button onClick={exportCsv} disabled={!sorted.length} title="Download the filtered rows as CSV (opens in Excel)"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid ' + (sorted.length ? 'var(--accent)' : 'var(--border)'), background: sorted.length ? 'var(--accent-surface)' : '#fff', color: sorted.length ? 'var(--accent)' : 'var(--text-3)', fontSize: 11.5, fontWeight: 700, cursor: sorted.length ? 'pointer' : 'default', fontFamily: 'var(--font)', flexShrink: 0 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+            Download CSV
+          </button>
         </div>
       </div>
 
