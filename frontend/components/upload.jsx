@@ -36,6 +36,8 @@ function UploadDataPage({ onOpenDataSource }) {
         </React.Fragment>
       )}
 
+      <UploadHistory />
+
       {/* Current source info */}
       <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(79,70,229,.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -801,4 +803,314 @@ function LedgerUpdateCard() {
   );
 }
 
-Object.assign(window, { UploadDataPage, LedgerUpdateCard, MergeDownloadCard, MergeSummary });
+/* ---- Upload history ------------------------------------------------------
+   Sonu's ask: show the pipeline runs in the Upload Data section, off both
+   tables — validation_runs (every upload attempt, with its checks) and
+   pipeline_jobs (the forecast run that follows a clean validation).
+
+   validation_runs is the spine: the pipeline writes it first and only creates
+   a pipeline_jobs row once validation clears, so an upload rejected at a hard
+   stop exists ONLY there. The two are matched on year_month + a timestamp
+   within a couple of minutes (in practice the job row lands ~0.3s after the
+   validation row).
+
+   Read straight from Supabase in the browser, same as LatestRunStatus, so the
+   list is current without waiting on a Streamlit rerun. */
+
+const UH_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function uhMonth(ym) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(ym || ''));
+  if (!m) return ym ? String(ym).replace(/^unknown$/i, 'Not detected') : '—';
+  return UH_MONTHS[parseInt(m[2], 10) - 1] + ' ' + m[1];
+}
+
+function uhWhen(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const p2 = n => String(n).padStart(2, '0');
+  return d.getDate() + ' ' + UH_MONTHS[d.getMonth()] + ' ' + d.getFullYear() + ', ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+
+function uhDuration(a, b) {
+  if (!a || !b) return null;
+  const ms = new Date(b).getTime() - new Date(a).getTime();
+  if (!isFinite(ms) || ms <= 0) return null;
+  const s = Math.round(ms / 1000);
+  return s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's';
+}
+
+const UH_BADGES = {
+  ok: { fg: '#047857', bg: 'rgba(5,150,105,.10)', bd: 'rgba(5,150,105,.30)' },
+  warn: { fg: '#B45309', bg: 'rgba(245,158,11,.12)', bd: 'rgba(245,158,11,.32)' },
+  bad: { fg: '#B91C1C', bg: 'rgba(220,38,38,.08)', bd: 'rgba(220,38,38,.26)' },
+  none: { fg: 'var(--text-3)', bg: 'var(--surface-2,#F3F4F7)', bd: 'var(--border)' },
+};
+
+function UhBadge({ tone, label }) {
+  const s = UH_BADGES[tone] || UH_BADGES.none;
+  return (
+    <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 9.5, fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase', color: s.fg, background: s.bg, border: '1px solid ' + s.bd, whiteSpace: 'nowrap' }}>{label}</span>
+  );
+}
+
+/* validation_runs.overall_result is PASS / PASS_WITH_WARNINGS / FAIL. Anything
+   starting with PASS cleared the gate — warnings are non-blocking. */
+function uhValidation(v) {
+  if (!v) return { tone: 'none', label: 'No record' };
+  const r = String(v.overall_result || '').toUpperCase();
+  if (r.indexOf('PASS') !== 0) return { tone: 'bad', label: 'Failed' };
+  return r.indexOf('WARN') >= 0 ? { tone: 'warn', label: 'Warnings' } : { tone: 'ok', label: 'Passed' };
+}
+
+function uhForecast(j) {
+  if (!j) return { tone: 'none', label: 'Not run' };
+  if (j.status === 'complete') return { tone: 'ok', label: 'Success' };
+  if (j.status === 'failed') return { tone: 'bad', label: 'Failed' };
+  return { tone: 'warn', label: j.status === 'queued' ? 'Queued' : 'Running' };
+}
+
+/* On success the pipeline leaves e.g. "Done — 1,551 predictions saved for
+   2026-09 → 2026-11" in current_step; the "Done —" prefix is noise next to a
+   status column. */
+function uhResult(v, j) {
+  if (j) {
+    if (j.status === 'failed') return j.error_message || 'The pipeline reported an error.';
+    const t = String(j.current_step || '').replace(/^\s*Done\s*[—–-]\s*/i, '').trim();
+    if (t) return t;
+    return j.status === 'complete' ? 'Predictions saved' : 'In progress…';
+  }
+  if (v && String(v.overall_result || '').toUpperCase().indexOf('PASS') !== 0) {
+    return v.hard_stop_reason || 'Stopped on a failing check — no forecast was run.';
+  }
+  return 'Validated · no forecast job recorded';
+}
+
+/* Pair each upload attempt with the forecast job it started. Same year_month
+   and within two minutes; each job is claimed once so two uploads of the same
+   month can't both point at it. */
+function uhJoin(vrs, jobs) {
+  const claimed = {};
+  const rows = vrs.map(v => {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < jobs.length; i++) {
+      const j = jobs[i];
+      if (claimed[j.id] || j.year_month !== v.year_month) continue;
+      const d = Math.abs(new Date(j.created_at).getTime() - new Date(v.upload_timestamp).getTime()) / 1000;
+      if (d <= 120 && d < bestD) { bestD = d; best = j; }
+    }
+    if (best) claimed[best.id] = true;
+    return { key: 'v' + v.id, v: v, j: best, at: v.upload_timestamp };
+  });
+  // A job with no validation row still belongs in the list.
+  jobs.forEach(j => {
+    if (!claimed[j.id]) rows.push({ key: 'j' + j.id, v: null, j: j, at: j.created_at });
+  });
+  rows.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  return rows;
+}
+
+/* checks_summary / auto_fixes_applied / items_flagged are by far the biggest
+   columns in validation_runs (~175 KB across 70 rows vs 14 KB without them),
+   so the list query leaves them out and the detail fetches just the one row it
+   is showing. */
+function UhDetail({ row }) {
+  const v = row.v, j = row.j;
+  const [full, setFull] = React.useState(null);
+  const [loadErr, setLoadErr] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!v) return;
+    let alive = true;
+    const base = window.__SUPABASE_URL, key = window.__SUPABASE_KEY;
+    if (!base || !key) { setLoadErr(true); return; }
+    (async () => {
+      try {
+        const r = await fetch(base + '/rest/v1/validation_runs?select=checks_summary,auto_fixes_applied,items_flagged&limit=1&id=eq.' + encodeURIComponent(v.id), { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+        if (!r.ok) throw new Error('http ' + r.status);
+        const d = await r.json();
+        if (alive) setFull((d && d[0]) || {});
+      } catch (e) {
+        if (alive) setLoadErr(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, [v && v.id]);
+
+  const checks = ((full && full.checks_summary) || []).slice().sort((a, b) => (a.check_id || 0) - (b.check_id || 0));
+  const autofixes = (full && full.auto_fixes_applied) || [];
+  const flagged = (full && full.items_flagged) || [];
+  const took = j && uhDuration(j.created_at, j.completed_at);
+  const meta = [];
+  if (j && j.job_id) meta.push('Job ' + String(j.job_id).slice(0, 8));
+  if (j && j.forecast_run_id) meta.push('Forecast run #' + j.forecast_run_id);
+  if (took) meta.push('Took ' + took);
+  if (v && v.processed_by) meta.push('Via ' + v.processed_by);
+
+  return (
+    <div style={{ padding: '4px 12px 14px 12px', background: '#FAFBFC' }}>
+      {checks.length > 0 ? (
+        <div>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.06em', paddingTop: 8 }}>Validation checks</div>
+          {checks.map((c, i) => <CheckRow key={i} c={c} />)}
+        </div>
+      ) : (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', paddingTop: 10 }}>
+          {!v ? 'No validation record was written for this run.'
+            : loadErr ? 'Could not load the validation checks.'
+            : full === null ? 'Loading the validation checks…'
+            : 'No checks were recorded for this run.'}
+        </div>
+      )}
+
+      {autofixes.length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: '#92400E', background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.22)', borderRadius: 7, padding: '7px 10px', lineHeight: 1.45 }}>
+          Auto-fixed: {autofixes.map(a => typeof a === 'string' ? a : (a.message || a.name || JSON.stringify(a))).join('; ')}
+        </div>
+      )}
+
+      {flagged.length > 0 && (
+        <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {flagged.map((f, i) => (
+            <span key={i} style={{ fontSize: 10.5, color: 'var(--text-2)', background: '#fff', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px' }}>
+              {(f && f.check) || 'Flagged'}: <strong style={{ color: 'var(--text)' }}>{typeof (f && f.count) === 'number' ? f.count.toLocaleString() : '—'}</strong>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {j && j.status === 'failed' && j.error_message && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: '#7F1D1D', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.22)', borderRadius: 7, padding: '7px 10px', lineHeight: 1.45 }}>
+          Pipeline error: {j.error_message}
+        </div>
+      )}
+
+      {meta.length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--text-3)' }}>{meta.join(' · ')}</div>
+      )}
+    </div>
+  );
+}
+
+function UploadHistory() {
+  const [rows, setRows] = React.useState(null); // null = still loading
+  const [failed, setFailed] = React.useState(false);
+  const [view, setView] = React.useState('ok');  // 'ok' = forecast completed
+  const [open, setOpen] = React.useState({});
+  const [nonce, setNonce] = React.useState(0);
+
+  React.useEffect(() => {
+    let alive = true;
+    const base = window.__SUPABASE_URL, key = window.__SUPABASE_KEY;
+    if (!base || !key) { setRows([]); setFailed(true); return; }
+    const get = async (path) => {
+      const r = await fetch(base + '/rest/v1/' + path, { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+      if (!r.ok) throw new Error('http ' + r.status);
+      return await r.json();
+    };
+    (async () => {
+      try {
+        const [vrs, jobs] = await Promise.all([
+          get('validation_runs?select=id,upload_timestamp,year_month,overall_result,hard_stop_reason,processed_by&order=upload_timestamp.desc&limit=100'),
+          get('pipeline_jobs?select=*&order=created_at.desc&limit=100'),
+        ]);
+        if (!alive) return;
+        setRows(uhJoin(Array.isArray(vrs) ? vrs : [], Array.isArray(jobs) ? jobs : []));
+        setFailed(false);
+      } catch (e) {
+        if (alive) { setRows([]); setFailed(true); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [nonce]);
+
+  const all = rows || [];
+  const okCount = all.filter(r => r.j && r.j.status === 'complete').length;
+  const shown = view === 'all' ? all : all.filter(r => r.j && r.j.status === 'complete');
+  // An expanded row carries the whole validation check list — give the box
+  // more room so the detail isn't read through a 360px slot.
+  const anyOpen = shown.some(r => open[r.key]);
+
+  const th = { padding: '8px 10px', fontSize: 9.5, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '2px solid var(--border)', background: '#FAFBFC', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1 };
+  const td = { padding: '9px 10px', fontSize: 12, color: 'var(--text)', borderBottom: '1px solid var(--border)', verticalAlign: 'top' };
+
+  const subtitle = rows === null ? 'Loading the pipeline runs…'
+    : failed ? 'Could not reach the pipeline tables.'
+    : all.length === 0 ? 'No ledger has been through the pipeline yet.'
+    : okCount + ' ledger' + (okCount === 1 ? '' : 's') + ' forecast successfully · ' + all.length + ' upload attempt' + (all.length === 1 ? '' : 's') + ' logged';
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 20px', marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 170 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: '-0.01em' }}>Upload history</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 2, lineHeight: 1.5 }}>{subtitle}</div>
+        </div>
+        {all.length > 0 && (
+          <div style={{ display: 'inline-flex', gap: 3, padding: 3, background: 'var(--surface-2,#F3F4F7)', borderRadius: 8 }}>
+            {[['ok', 'Successful'], ['all', 'All uploads']].map(([v, label]) => (
+              <button key={v} onClick={() => setView(v)} style={{
+                padding: '5px 11px', fontSize: 11, fontWeight: view === v ? 700 : 600, border: 'none', borderRadius: 6, cursor: 'pointer', fontFamily: 'var(--font)',
+                background: view === v ? '#fff' : 'transparent', color: view === v ? 'var(--accent)' : 'var(--text-2)',
+                boxShadow: view === v ? '0 1px 3px rgba(0,0,0,.08)' : 'none', transition: 'all .12s',
+              }}>{label}</button>
+            ))}
+          </div>
+        )}
+        <button onClick={() => setNonce(n => n + 1)} style={{ padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: '#fff', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)', flexShrink: 0 }}>Refresh</button>
+      </div>
+
+      {shown.length > 0 ? (
+        <div className="h-scroller" style={{ overflow: 'auto', maxHeight: anyOpen ? 620 : 360, border: '1px solid var(--border)', borderRadius: 9 }}>
+          <table style={{ width: '100%', minWidth: 660, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, width: 22, padding: '8px 0 8px 8px' }}></th>
+                <th style={th}>Ledger month</th>
+                <th style={th}>Uploaded</th>
+                <th style={th}>Validation</th>
+                <th style={th}>Forecast</th>
+                <th style={th}>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map(r => {
+                const val = uhValidation(r.v);
+                const fore = uhForecast(r.j);
+                const isOpen = !!open[r.key];
+                return (
+                  <React.Fragment key={r.key}>
+                    <tr onClick={() => setOpen(o => Object.assign({}, o, { [r.key]: !o[r.key] }))}
+                      style={{ cursor: 'pointer', background: isOpen ? 'var(--accent-surface)' : 'transparent' }}>
+                      <td style={{ ...td, padding: '9px 0 9px 8px' }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
+                          style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}><polyline points="9 18 15 12 9 6"></polyline></svg>
+                      </td>
+                      <td style={{ ...td, fontWeight: 700, whiteSpace: 'nowrap' }}>{uhMonth((r.v && r.v.year_month) || (r.j && r.j.year_month))}</td>
+                      <td style={{ ...td, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{uhWhen(r.at)}</td>
+                      <td style={td}><UhBadge tone={val.tone} label={val.label} /></td>
+                      <td style={td}><UhBadge tone={fore.tone} label={fore.label} /></td>
+                      <td style={{ ...td, color: (r.j && r.j.status === 'failed') || val.tone === 'bad' ? '#B91C1C' : 'var(--text-2)', lineHeight: 1.45, minWidth: 190 }}>{uhResult(r.v, r.j)}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}><UhDetail row={r} /></td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : rows !== null && (
+        <div style={{ padding: '18px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>
+          {failed ? 'The pipeline tables are unavailable right now.' : all.length > 0 ? 'No forecast has completed yet — switch to All uploads to see the attempts.' : 'Upload a ledger to start the first run.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+Object.assign(window, { UploadDataPage, LedgerUpdateCard, MergeDownloadCard, MergeSummary, UploadHistory });
