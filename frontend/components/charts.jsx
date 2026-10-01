@@ -303,14 +303,16 @@ function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape'
   const tdS = { padding: '6px 10px', fontSize: 11, borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' };
   const mapeColor = (v) => v == null ? 'var(--text-3)' : v > 100 ? '#DC2626' : v > 50 ? '#D97706' : '#059669';
 
-  const rows = mapeData.length > 0 ? mapeData : periodGroups.map(pg => ({
+  // Latest month first (client asked) — sort a copy, the summary itself stays
+  // oldest-first for the charts that read it.
+  const rows = (mapeData.length > 0 ? mapeData : periodGroups.map(pg => ({
     period: pg.period, model: modelLabel || 'Forecast',
     mapeAll: null, mapeHV: null,
     itemsPredicted: pg.data.length,
     itemsDeliver: pg.data.filter(d => d.predictedAction === 'Deliver').length,
     itemsReturn: pg.data.filter(d => d.predictedAction === 'Return').length,
     tier: '—',
-  }));
+  }))).slice().sort((a, b) => String(b.period).localeCompare(String(a.period)));
 
   return (
     <div>
