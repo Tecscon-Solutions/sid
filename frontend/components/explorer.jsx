@@ -307,6 +307,15 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
         )}
       </div>
 
+      {/* Comment for the active Type filter — what the list is showing. */}
+      {hvFilter !== 'All' && (
+        <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '-4px 0 10px', flexShrink: 0 }}>
+          {hvFilter === 'HV' && <>Showing <b style={{ color: 'var(--text-2)' }}>High Value</b> items only — the SKUs flagged high value in the forecast.</>}
+          {hvFilter === 'Standard' && <>Showing <b style={{ color: 'var(--text-2)' }}>Standard</b> items only — everything not flagged high value.</>}
+          {hvFilter === 'Dormant' && <>Showing <b style={{ color: 'var(--text-2)' }}>Dormant</b> items only — no movement, or an unchanged count, for a year or more in actual history ({dormantCodes.size} item{dormantCodes.size === 1 ? '' : 's'}; the same list as the Dormant Items page). This is separate from the Dormant behaviour tab above, which looks only at the last 6 periods.</>}
+        </div>
+      )}
+
       {/* Body: table + side panel */}
       <div style={{ flex: 1, display: 'flex', gap: 12, overflow: 'hidden', paddingBottom: 14 }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', border: '1px solid var(--border)', borderRadius: 12 }}>
