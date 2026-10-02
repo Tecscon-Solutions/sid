@@ -708,6 +708,21 @@ function ItemForecastsGrid({ allData }) {
     return rows;
   }, [items, hvOnly, search, exactItem]);
 
+  // Each card is a full chart (a bar group, labels and markers per month), so
+  // drawing every item at once meant tens of thousands of SVG nodes and a tab
+  // that took seconds to open. Draw a first batch and add more as the list is
+  // scrolled; a new search or filter starts again from the top.
+  const BATCH = 10;
+  const [shown, setShown] = React.useState(BATCH);
+  React.useEffect(() => {
+    setShown(BATCH);
+    if (gridRef.current) gridRef.current.scrollTop = 0;
+  }, [filtered]);
+  const onGridScroll = e => {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 800) setShown(n => (n < filtered.length ? n + BATCH : n));
+  };
+
   // Unique items for the search dropdown.
   const searchOptions = React.useMemo(() =>
     items.map(it => ({ label: it.desc || it.code, sub: it.code, code: it.code, isHV: it.isHV })),
@@ -773,7 +788,7 @@ function ItemForecastsGrid({ allData }) {
 
       {/* Scrollable grid — vertical scroll only; chart inside each card
           handles its own horizontal overflow when periods are too dense. */}
-      <div ref={gridRef} style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+      <div ref={gridRef} onScroll={onGridScroll} style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         {filtered.length === 0 ? (
           <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
             No items found{search ? ` for "${search}"` : ''}
@@ -792,7 +807,12 @@ function ItemForecastsGrid({ allData }) {
               gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
               gap: 16, paddingBottom: 16,
             }}>
-              {filtered.map(it => <ItemForecastCard key={it.code} item={it} />)}
+              {filtered.slice(0, shown).map(it => <ItemForecastCard key={it.code} item={it} />)}
+              {shown < filtered.length && (
+                <button onClick={() => setShown(n => n + BATCH)} style={{ gridColumn: '1 / -1', padding: '10px', borderRadius: 8, border: '1px dashed var(--border)', background: '#fff', color: 'var(--text-2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)' }}>
+                  Showing {shown} of {filtered.length} — scroll or click for more
+                </button>
+              )}
             </div>
           );
         })()}

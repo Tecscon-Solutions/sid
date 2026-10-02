@@ -48,6 +48,68 @@ function NewItemsPage({ allData }) {
     return { itemCode: itemSel, description: rows[0].description || rows[0].itemCode, isHV: rows[0].isHV, periods: rows };
   }, [itemSel, allData]);
 
+  // Zoom + pan for the roster chart. Zoom widens the chart inside a scrolling
+  // frame (buttons, or the mouse wheel over the chart); pan by dragging, or
+  // with the scrollbars. The point under the mouse stays put while zooming.
+  const ZMIN = 1, ZMAX = 6;
+  const [zoom, setZoom] = React.useState(1);
+  const frameRef = React.useRef(null);
+  const anchorRef = React.useRef(null);   // { fx, fy, px, py } — chart fraction under the mouse, and where it sat in the frame
+  const dragRef = React.useRef(null);
+  const draggedRef = React.useRef(false);
+  const [dragging, setDragging] = React.useState(false);
+  const zoomTo = (next, clientX, clientY) => {
+    const el = frameRef.current;
+    const z = Math.max(ZMIN, Math.min(ZMAX, next));
+    if (el) {
+      const r = el.getBoundingClientRect();
+      const px = clientX != null ? clientX - r.left : el.clientWidth / 2;
+      const py = clientY != null ? clientY - r.top : el.clientHeight / 2;
+      anchorRef.current = { fx: (el.scrollLeft + px) / Math.max(el.scrollWidth, 1), fy: (el.scrollTop + py) / Math.max(el.scrollHeight, 1), px, py };
+    }
+    setZoom(z);
+  };
+  React.useLayoutEffect(() => {
+    const el = frameRef.current, a = anchorRef.current;
+    if (!el || !a) return;
+    el.scrollLeft = a.fx * el.scrollWidth - a.px;
+    el.scrollTop = a.fy * el.scrollHeight - a.py;
+    anchorRef.current = null;
+  }, [zoom]);
+  // Wheel zooms the chart. React's onWheel is passive, so attach natively to be
+  // able to stop the page from scrolling underneath.
+  const zoomRef = React.useRef(zoom); zoomRef.current = zoom;
+  const zoomToRef = React.useRef(zoomTo); zoomToRef.current = zoomTo;
+  const hasChart = periods.length >= 2;
+  React.useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    const onWheel = e => {
+      if (e.deltaY === 0) return;
+      e.preventDefault();
+      zoomToRef.current(zoomRef.current * (e.deltaY < 0 ? 1.2 : 1 / 1.2), e.clientX, e.clientY);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [hasChart]);
+  const onPanStart = e => {
+    const el = frameRef.current;
+    if (!el || e.button !== 0) return;
+    dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+    draggedRef.current = false;
+  };
+  const onPanMove = e => {
+    const d = dragRef.current, el = frameRef.current;
+    if (!d || !el) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (!draggedRef.current && Math.abs(dx) + Math.abs(dy) < 5) return;
+    draggedRef.current = true;
+    if (!dragging) setDragging(true);
+    el.scrollLeft = d.sl - dx;
+    el.scrollTop = d.st - dy;
+  };
+  const onPanEnd = () => { dragRef.current = null; if (dragging) setDragging(false); };
+
   if (periods.length < 2) return <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)', fontSize: 14 }}>Need at least two months of data to show item changes.</div>;
 
   // Summary
@@ -98,10 +160,24 @@ function NewItemsPage({ allData }) {
       <div style={{ flex: 1, display: 'flex', gap: 14, overflow: 'hidden', paddingBottom: 14, minHeight: 0 }}>
         {/* Timeline */}
         <div style={{ flex: 1, background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Roster size by month</div>
-          <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 10 }}>How many products are in the forecast each month. Green dots mark months where new items were added — click any month to list them.</div>
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center' }}>
-            <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Roster size by month</div>
+              <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 10 }}>How many products are in the forecast each month. Green dots mark months where new items were added — click any month to list them. Scroll to zoom, drag to pan.</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {[['−', 'Zoom out', () => zoomTo(zoom / 1.4), zoom <= ZMIN], ['+', 'Zoom in', () => zoomTo(zoom * 1.4), zoom >= ZMAX]].map(([label, tip, fn, off]) => (
+                <button key={tip} onClick={fn} disabled={off} title={tip} style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border)', background: '#fff', cursor: off ? 'default' : 'pointer', fontSize: 16, fontWeight: 600, lineHeight: 1, color: off ? 'var(--text-3)' : 'var(--text)', opacity: off ? .5 : 1, fontFamily: 'var(--font)' }}>{label}</button>
+              ))}
+              <span style={{ fontSize: 10.5, fontFamily: 'var(--mono)', color: 'var(--text-2)', minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+              <button onClick={() => zoomTo(1)} disabled={zoom === 1} title="Fit the whole timeline" style={{ height: 28, padding: '0 10px', borderRadius: 7, border: '1px solid var(--border)', background: '#fff', cursor: zoom === 1 ? 'default' : 'pointer', fontSize: 11, fontWeight: 600, color: zoom === 1 ? 'var(--text-3)' : 'var(--text-2)', opacity: zoom === 1 ? .5 : 1, fontFamily: 'var(--font)' }}>Reset</button>
+            </div>
+          </div>
+          <div ref={frameRef} className="h-scroller"
+            onMouseDown={onPanStart} onMouseMove={onPanMove} onMouseUp={onPanEnd} onMouseLeave={onPanEnd}
+            onClickCapture={e => { if (draggedRef.current) { e.stopPropagation(); draggedRef.current = false; } }}
+            style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'auto', userSelect: 'none', cursor: zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default' }}>
+            <svg viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', width: `${zoom * 100}%`, flexShrink: 0, margin: 'auto' }}>
               {/* gridlines */}
               {[0, 0.5, 1].map((g, i) => { const yy = padT + cH - g * cH; return <g key={i}><line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="#F3F4F6" /><text x={padL - 6} y={yy + 3} textAnchor="end" fontSize="9" fill="var(--text-3)" fontFamily="var(--mono)">{Math.round(maxC * g)}</text></g>; })}
               {/* compressed flat ranges — unchanged stretches shown as one straight segment */}

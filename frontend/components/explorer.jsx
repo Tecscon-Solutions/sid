@@ -669,8 +669,12 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
             const p = series[hoverIdx], x = cx(hoverIdx);
             const hasA = p.actualClosingBal != null;
             const bw = 118, bh = hasA ? 50 : 36;
-            const bx = Math.max(padL + 2, Math.min(w - padR - bw, x - bw / 2));
-            const by = padT;
+            // Keep the label off the points: beside the guide line (whichever side
+            // has room), and in the half of the chart the hovered points are not in.
+            const bx = x + 10 + bw <= w - padR ? x + 10 : x - 10 - bw;
+            const ys = [cy(p.predictedClosingBal || 0)].concat(hasA ? [cy(p.actualClosingBal)] : []);
+            const yMid = (Math.min(...ys) + Math.max(...ys)) / 2;
+            const by = yMid < padT + cH / 2 ? padT + cH - bh - 2 : padT + 2;
             return (
               <g style={{ pointerEvents: 'none' }}>
                 <line x1={x} y1={padT} x2={x} y2={padT + cH} stroke="#9CA3AF" strokeDasharray="3,3" />
