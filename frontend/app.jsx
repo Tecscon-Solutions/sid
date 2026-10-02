@@ -645,7 +645,8 @@ function PeriodPicker({ value, onChange, options }) {
 
 
 function NetMovementBars({ periodGroups, dense, mode = 'predicted' }) {
-  const bars = periodGroups.map(pg => {
+  // Newest month first, left to right (client asked for descending order).
+  const bars = periodGroups.slice().sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0)).map(pg => {
     const del = pg.data.filter(d => fcAction(d, mode) === 'Deliver').reduce((s, d) => s + fcQty(d, mode), 0);
     const ret = pg.data.filter(d => fcAction(d, mode) === 'Return').reduce((s, d) => s + fcQty(d, mode), 0);
     return { period: pg.period, deliver: del, return: ret, net: del - ret };

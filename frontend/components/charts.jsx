@@ -1378,7 +1378,7 @@ function DirectionAccuracyByMonth({ allData }) {
 
 /* ===== PORTFOLIO ACTUAL VS PREDICTED ===== */
 function PortfolioActualVsPredicted({ periodGroups }) {
-  const bars = periodGroups.map(pg => {
+  const bars = periodGroups.slice().sort(newestFirst).map(pg => {
     const predicted = pg.data.reduce((s, d) => s + (d.predictedClosingBal || 0), 0);
     const actual = pg.data.filter(d => d.actualClosingBal != null).reduce((s, d) => s + (d.actualClosingBal || 0), 0);
     const hasActual = pg.data.some(d => d.actualClosingBal != null && d.actualClosingBal > 0);

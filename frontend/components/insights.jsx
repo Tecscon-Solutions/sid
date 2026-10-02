@@ -249,7 +249,8 @@ function ActionCalendarHeatmap({ data }) {
   const fmtPeriod = p => { const m = p.match(/^(\d{4})-(\d{2})$/); return m ? MO[parseInt(m[2])-1] + " '" + m[1].slice(2) : p; };
   const yearOf = p => p.split('-')[0];
 
-  const periods = [...new Set(data.map(d => d.period))].sort();
+  // Newest month first, left to right (client asked for descending order).
+  const periods = [...new Set(data.map(d => d.period))].sort().reverse();
 
   const byItem = React.useMemo(() => {
     const map = {};
