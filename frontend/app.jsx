@@ -638,7 +638,7 @@ function PeriodPicker({ value, onChange, options }) {
       padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: '#fff',
       fontSize: 12, fontWeight: 600, fontFamily: 'var(--font)', color: 'var(--text)', cursor: 'pointer', outline: 'none'
     }}>
-      {options.map(p => <option key={p} value={p}>{fmt(p)}</option>)}
+      {options.slice().reverse().map(p => <option key={p} value={p}>{fmt(p)}</option>)}
     </select>
   );
 }
@@ -1048,7 +1048,7 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
             </div>
           ) : (
             <div style={{ display: 'flex', background: 'var(--surface-2)', borderRadius: 8, padding: 2, gap: 2 }}>
-              {['All', ...periods].map(p => (
+              {['All', ...periods.slice().reverse()].map(p => (
                 <button key={p} onClick={() => setPeriodFilter(p)} style={{
                   padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'var(--font)',
                   background: periodFilter === p ? '#fff' : 'transparent',

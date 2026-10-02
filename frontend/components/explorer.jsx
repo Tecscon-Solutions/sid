@@ -937,7 +937,7 @@ function ScopePicker({ value, onChange, singlePeriod, onSinglePeriodChange, allP
         {value === 'single' && (
           <div style={{ padding: 6, borderTop: '1px solid var(--border)', marginTop: 4 }}>
             <select value={singlePeriod} onChange={e => onSinglePeriodChange(e.target.value)} style={{ width: '100%', padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)', background: '#fff', fontSize: 11, fontFamily: 'var(--font)' }}>
-              {allPeriods.map(p => <option key={p} value={p}>{fmt(p)}</option>)}
+              {allPeriods.slice().reverse().map(p => <option key={p} value={p}>{fmt(p)}</option>)}
             </select>
           </div>
         )}

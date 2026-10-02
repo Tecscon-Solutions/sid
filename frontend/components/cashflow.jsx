@@ -95,7 +95,7 @@ function CashFlowPage({ allData }) {
           {futurePeriods.length > 1 && (
             <select value={month || ''} onChange={e => setMonth(e.target.value)}
               style={{ padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, fontWeight: 600, fontFamily: 'var(--font)', color: 'var(--accent)', background: '#fff', outline: 'none', cursor: 'pointer' }}>
-              {futurePeriods.map(p => <option key={p} value={p}>{fmtP(p)}</option>)}
+              {futurePeriods.slice().reverse().map(p => <option key={p} value={p}>{fmtP(p)}</option>)}
             </select>
           )}
           <button onClick={exportCsv} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent-surface)', color: 'var(--accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' }}>

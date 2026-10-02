@@ -348,7 +348,7 @@ function AFPeriodPicker({ value, onChange, options, fmt }) {
       </button>
       {open && (
         <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, background: '#fff', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.10)', maxHeight: 280, overflowY: 'auto', zIndex: 100, minWidth: 120 }}>
-          {options.map(p => (
+          {options.slice().reverse().map(p => (
             <button key={p} onClick={() => { onChange(p); setOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 14px', border: 'none', background: value === p ? 'var(--accent-surface)' : 'transparent', color: value === p ? 'var(--accent)' : 'var(--text-2)', cursor: 'pointer', fontSize: 12, fontWeight: value === p ? 700 : 500, fontFamily: 'var(--font)' }}
               onMouseEnter={e => { if (value !== p) e.currentTarget.style.background = 'var(--hover)'; }}
               onMouseLeave={e => { if (value !== p) e.currentTarget.style.background = 'transparent'; }}>{fmt(p)}</button>
