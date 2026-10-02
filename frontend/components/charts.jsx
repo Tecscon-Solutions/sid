@@ -61,8 +61,19 @@ function TopItemsBar({ data, action, maxItems = 15, color, mode = 'predicted' })
 }
 
 /* ===== HV vs STANDARD STACKED BAR ===== */
-function HVBreakdown({ data, mode = 'predicted' }) {
+function HVBreakdown({ data, allData, mode = 'predicted' }) {
+  // Dormant = the Dormant Items page's list (a year or more with no movement or
+  // an unchanged count, from the full actual history). It is an extra bar: a
+  // dormant item is also counted in its High Value or Standard bar.
+  const dormantCodes = React.useMemo(() => {
+    let latest = null;
+    (allData || []).forEach(d => { if (d.actualClosingBal != null && (!latest || d.period > latest)) latest = d.period; });
+    if (!latest || !window.computeDormantRuns) return null;
+    const r = window.computeDormantRuns(allData, latest);
+    return new Set([...r.zeroTxn, ...r.constCount].map(x => x.code));
+  }, [allData]);
   const groups = [{ label: 'High Value', items: data.filter(d => d.isHV) }, { label: 'Standard', items: data.filter(d => !d.isHV) }];
+  if (dormantCodes) groups.push({ label: 'Dormant', items: data.filter(d => dormantCodes.has(d.itemCode)) });
   const actions = ['Deliver', 'No Change', 'Return'];
   const colors = { Deliver: '#059669', 'No Change': '#D97706', Return: '#DC2626' };
   const maxStack = Math.max(...groups.map(g => g.items.length), 1);

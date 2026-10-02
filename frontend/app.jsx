@@ -364,7 +364,7 @@ function PredictionsPage({ data, allData, stats, periodGroups, period, mode = 'p
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden', padding: 16, display: 'flex', flexDirection: 'column' }}>
-        {tab === 'overview' && <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}><OverviewTab data={data} stats={stats} periodGroups={periodGroups} period={period} mode={viewMode} /></div>}
+        {tab === 'overview' && <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}><OverviewTab data={data} allData={allData} stats={stats} periodGroups={periodGroups} period={period} mode={viewMode} /></div>}
         {tab === 'movement' && <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}><MovementTab data={data} periodGroups={periodGroups} mode={viewMode} hasActuals={stats.hasActuals} /></div>}
         {tab === 'distribution' && <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}><DistributionTab data={data} allData={allData} mode={viewMode} /></div>}
         {tab === 'insights' && <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}><InsightsTab data={data} allData={allData} periodGroups={periodGroups} period={period} /></div>}
@@ -373,7 +373,7 @@ function PredictionsPage({ data, allData, stats, periodGroups, period, mode = 'p
   );
 }
 
-function OverviewTab({ data, stats, periodGroups, period, mode = 'predicted' }) {
+function OverviewTab({ data, allData, stats, periodGroups, period, mode = 'predicted' }) {
   const mapeData = window.__MAPE_SUMMARY || [];
   // Mode tag for card titles — only when the month has actuals (so the toggle
   // is present and the suffix actually disambiguates predicted vs actual).
@@ -505,7 +505,7 @@ function OverviewTab({ data, stats, periodGroups, period, mode = 'predicted' }) 
         );
       })()}
       <Card title={'Action Mix' + modeTag} style={{ gridColumn: 'span 2' }} info={`Every item this month is recommended to Deliver (ship stock out to site), Return (send stock back), or No Change (hold). The donut shows how all items split across those three actions — the centre number is the total item count. Switch the header toggle to Actual to see what actually happened.`}><ActionDonut data={data} mode={mode} /></Card>
-      <Card title={'HV vs Standard' + modeTag} style={{ gridColumn: 'span 2' }} info={`The same Deliver / Return / No-Change split, but separated for High-Value items (your most important SKUs) vs Standard items — so you can see whether the key items behave differently from the rest.`}><HVBreakdown data={data} mode={mode} /></Card>
+      <Card title={'HV vs Standard vs Dormant' + modeTag} style={{ gridColumn: 'span 2' }} info={`The same Deliver / Return / No-Change split, separated for High-Value items (your most important SKUs), Standard items and Dormant items — so you can see whether the key items, and the ones that have gone quiet, behave differently from the rest. Dormant = items with no movement, or an unchanged count, for a year or more (the same list as the Dormant Items page). The Dormant bar is an extra view: each dormant item is also counted in its High-Value or Standard bar, so the three bars do not add up to the total.`}><HVBreakdown data={data} allData={allData} mode={mode} /></Card>
       <Card title={'Closing Balance' + modeTag} style={{ gridColumn: 'span 2' }} info={`Total units on site at the end of last month vs the model's predicted total for this month (or the real total in Actual mode). A longer second bar means overall inventory is forecast to grow.`}><ClosingBalancePortfolio data={data} mode={mode} /></Card>
       <Card title={'Top 10 Deliver' + modeTag} style={{ gridColumn: 'span 3' }} info={`The ten items with the largest predicted delivery quantity this month — where the most stock is forecast to ship out. Bar length = number of units.`}><TopItemsBar data={data} action="Deliver" maxItems={10} color="#059669" mode={mode} /></Card>
       <Card title={'Top 10 Return' + modeTag} style={{ gridColumn: 'span 3' }} info={`The ten items with the largest predicted return quantity this month — where the most stock is forecast to come back from site.`}><TopItemsBar data={data} action="Return" maxItems={10} color="#DC2626" mode={mode} /></Card>
