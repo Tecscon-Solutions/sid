@@ -12,6 +12,47 @@
    since dormancy is a fact about the observed past. Each row carries a
    sparkline of the item's balance with the dormant stretch highlighted.
    ============================================================ */
+// The dormancy rule, shared with the Item Explorer's Dormant filter: an item is
+// dormant when it has MIN or more consecutive months of No Change, or of an
+// unchanged actual count.
+function computeDormantRuns(allData, latestActual, MIN = 12) {
+  const ymConsec = (a, b) => { const A = (+a.slice(0, 4)) * 12 + (+a.slice(5, 7)); const B = (+b.slice(0, 4)) * 12 + (+b.slice(5, 7)); return B - A === 1; };
+  const byItem = {};
+  (allData || []).forEach(d => { (byItem[d.itemCode] = byItem[d.itemCode] || []).push(d); });
+  const zero = [], cons = [], seriesByItem = {};
+  for (const code in byItem) {
+    const rows = byItem[code].slice().sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : 0));
+    const first = rows[0];
+    seriesByItem[code] = rows.map(r => ({ p: r.period, b: r.actualClosingBal != null ? r.actualClosingBal : r.predictedClosingBal }));
+
+    let zBest = 0, zStart = null, zEnd = null, zCur = 0, zCurStart = null, zPrev = null;
+    let cBest = 0, cStart = null, cEnd = null, cVal = null, cCur = 0, cCurStart = null, cCurVal = null, cPrev = null, cPrevVal = null;
+    for (const r of rows) {
+      const p = r.period;
+      const noChange = r.actualAction === 'No Change';
+      if (noChange && (zPrev === null || ymConsec(zPrev, p))) { if (zCur === 0) zCurStart = p; zCur++; }
+      else if (noChange) { zCur = 1; zCurStart = p; }
+      else { zCur = 0; zCurStart = null; }
+      if (zCur > zBest) { zBest = zCur; zStart = zCurStart; zEnd = p; }
+      zPrev = p;
+
+      const v = r.actualClosingBal;
+      if (v == null) { cCur = 0; cPrev = p; cPrevVal = null; }
+      else {
+        if (cPrevVal != null && cPrev != null && ymConsec(cPrev, p) && Math.abs(v - cPrevVal) < 0.5) cCur++;
+        else { cCur = 1; cCurStart = p; cCurVal = v; }
+        if (cCur > cBest) { cBest = cCur; cStart = cCurStart; cEnd = p; cVal = cCurVal; }
+        cPrev = p; cPrevVal = v;
+      }
+    }
+    const base = { code, desc: first.description || code, isHV: !!first.isHV };
+    if (zBest >= MIN) zero.push({ ...base, months: zBest, start: zStart, end: zEnd, ongoing: zEnd === latestActual });
+    if (cBest >= MIN) cons.push({ ...base, months: cBest, start: cStart, end: cEnd, value: cVal, ongoing: cEnd === latestActual });
+  }
+  return { zeroTxn: zero, constCount: cons, seriesByItem };
+}
+window.computeDormantRuns = computeDormantRuns;
+
 function DormantItemsPage({ allData }) {
   const MIN = 12; // "1 year"
 
@@ -31,41 +72,8 @@ function DormantItemsPage({ allData }) {
     return { latestActual: latest, firstActual: earliest };
   }, [allData]);
 
-  const { zeroTxn, constCount, seriesByItem } = React.useMemo(() => {
-    const byItem = {};
-    (allData || []).forEach(d => { (byItem[d.itemCode] = byItem[d.itemCode] || []).push(d); });
-    const zero = [], cons = [], seriesByItem = {};
-    for (const code in byItem) {
-      const rows = byItem[code].slice().sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : 0));
-      const first = rows[0];
-      seriesByItem[code] = rows.map(r => ({ p: r.period, b: r.actualClosingBal != null ? r.actualClosingBal : r.predictedClosingBal }));
-
-      let zBest = 0, zStart = null, zEnd = null, zCur = 0, zCurStart = null, zPrev = null;
-      let cBest = 0, cStart = null, cEnd = null, cVal = null, cCur = 0, cCurStart = null, cCurVal = null, cPrev = null, cPrevVal = null;
-      for (const r of rows) {
-        const p = r.period;
-        const noChange = r.actualAction === 'No Change';
-        if (noChange && (zPrev === null || ymConsec(zPrev, p))) { if (zCur === 0) zCurStart = p; zCur++; }
-        else if (noChange) { zCur = 1; zCurStart = p; }
-        else { zCur = 0; zCurStart = null; }
-        if (zCur > zBest) { zBest = zCur; zStart = zCurStart; zEnd = p; }
-        zPrev = p;
-
-        const v = r.actualClosingBal;
-        if (v == null) { cCur = 0; cPrev = p; cPrevVal = null; }
-        else {
-          if (cPrevVal != null && cPrev != null && ymConsec(cPrev, p) && Math.abs(v - cPrevVal) < 0.5) cCur++;
-          else { cCur = 1; cCurStart = p; cCurVal = v; }
-          if (cCur > cBest) { cBest = cCur; cStart = cCurStart; cEnd = p; cVal = cCurVal; }
-          cPrev = p; cPrevVal = v;
-        }
-      }
-      const base = { code, desc: first.description || code, isHV: !!first.isHV };
-      if (zBest >= MIN) zero.push({ ...base, months: zBest, start: zStart, end: zEnd, ongoing: zEnd === meta.latestActual });
-      if (cBest >= MIN) cons.push({ ...base, months: cBest, start: cStart, end: cEnd, value: cVal, ongoing: cEnd === meta.latestActual });
-    }
-    return { zeroTxn: zero, constCount: cons, seriesByItem };
-  }, [allData, meta.latestActual]);
+  const { zeroTxn, constCount, seriesByItem } = React.useMemo(
+    () => computeDormantRuns(allData, meta.latestActual, MIN), [allData, meta.latestActual]);
 
   const [q1, setQ1] = React.useState('');
   const [q2, setQ2] = React.useState('');

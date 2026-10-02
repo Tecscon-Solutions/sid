@@ -926,16 +926,16 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
     const head = ['Period', 'Item Code', 'Item', 'Pred. Action',
       ...(hasActuals ? ['Actual Action'] : []),
       'Prev Bal', 'Pred. Bal',
-      ...(hasActuals ? ['Actual Bal', 'Error', 'APE %'] : []),
-      'Pred. Change', 'Qty', 'MAPE %', 'High Value'];
+      ...(hasActuals ? ['Actual Bal', 'Actual Delta'] : []),
+      'Pred. Change', ...(hasActuals ? ['APE %'] : []), 'MAPE %', 'High Value'];
     const body = sorted.map(d => {
       const ape = d.ape != null ? d.ape
         : (d.error != null && d.actualClosingBal ? Math.abs(d.error / d.actualClosingBal) * 100 : null);
       return [d.period, d.itemCode, d.description, d.predictedAction,
         ...(hasActuals ? [d.actualAction || ''] : []),
         r0(d.prevClosingBal), r0(d.predictedClosingBal),
-        ...(hasActuals ? [r0(d.actualClosingBal), r0(d.error), ape != null ? ape.toFixed(1) : ''] : []),
-        r0(d.difference), r0(d.quantity),
+        ...(hasActuals ? [r0(d.actualClosingBal), r0(d.error)] : []),
+        r0(d.difference), ...(hasActuals ? [ape != null ? ape.toFixed(1) : ''] : []),
         d.itemMape != null ? d.itemMape.toFixed(1) : '',
         d.isHV ? 'Yes' : 'No'];
     });
@@ -960,10 +960,9 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
     { col: 'prevClosingBal',      label: 'Prev Bal',      width: '8%',  align: 'right', sortable: true },
     { col: 'predictedClosingBal', label: 'Pred. Bal',     width: '8%',  align: 'right', sortable: true },
     ...(hasActuals ? [{ col: 'actualClosingBal', label: 'Actual Bal', width: '8%', align: 'right', sortable: true }] : []),
-    ...(hasActuals ? [{ col: 'error', label: 'Error (Δ)', width: '7%', align: 'right', sortable: true }] : []),
-    ...(hasActuals ? [{ col: 'ape', label: 'APE %', width: '6%', align: 'right', sortable: true }] : []),
+    ...(hasActuals ? [{ col: 'error', label: 'Actual (Δ)', width: '7%', align: 'right', sortable: true }] : []),
     { col: 'difference',          label: 'Pred. Δ',       width: '7%',  align: 'right', sortable: true },
-    { col: 'quantity',            label: 'Qty',            width: '6%',  align: 'right', sortable: true },
+    ...(hasActuals ? [{ col: 'ape', label: 'APE %', width: '6%', align: 'right', sortable: true }] : []),
     { col: 'itemMape',            label: 'MAPE',           width: '6%',  align: 'right', sortable: true },
     // The pred-cost columns moved to the dedicated Costing page (CostingPage)
     // — Sonu found them crowding the inventory details here.
@@ -1150,17 +1149,10 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 700 }}>{fmt(row.predictedClosingBal)}</td>
                     {hasActuals && <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-2)' }}>{row.actualClosingBal != null ? fmt(row.actualClosingBal) : '—'}</td>}
 
-                    {/* Error (absolute) */}
+                    {/* Actual Δ (actual − predicted) */}
                     {hasActuals && (
                       <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 600, color: row.error == null ? 'var(--text-3)' : row.error < 0 ? '#DC2626' : '#059669' }}>
                         {row.error != null ? fmtSigned(row.error) : '—'}
-                      </td>
-                    )}
-
-                    {/* APE % — direct from v4 schema (with fallback for older files) */}
-                    {hasActuals && (
-                      <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 700, color: apeVal == null ? 'var(--text-3)' : apeVal > 100 ? '#DC2626' : apeVal > 30 ? '#D97706' : '#059669' }}>
-                        {apeVal != null ? apeVal.toFixed(1) + '%' : '—'}
                       </td>
                     )}
 
@@ -1169,7 +1161,12 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
                       {fmtSigned(row.difference)}
                     </td>
 
-                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 700 }}>{fmt(row.quantity)}</td>
+                    {/* APE % — direct from v4 schema (with fallback for older files) */}
+                    {hasActuals && (
+                      <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 700, color: apeVal == null ? 'var(--text-3)' : apeVal > 100 ? '#DC2626' : apeVal > 30 ? '#D97706' : '#059669' }}>
+                        {apeVal != null ? apeVal.toFixed(1) + '%' : '—'}
+                      </td>
+                    )}
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 700,
                       color: row.itemMape == null ? 'var(--text-3)' : row.itemMape > 100 ? '#DC2626' : row.itemMape > 50 ? '#D97706' : '#059669' }}>
                       {row.itemMape != null ? row.itemMape.toFixed(1) + '%' : '—'}

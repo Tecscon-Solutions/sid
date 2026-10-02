@@ -170,6 +170,17 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
       .sort((a, b) => (a.label || '').localeCompare(b.label || '')),
     [itemSummaries]);
 
+  // Type → Dormant: the items on the Dormant Items page (a year or more with no
+  // movement or an unchanged count, from actual history) — the same rule, so
+  // the two lists always agree.
+  const dormantCodes = React.useMemo(() => {
+    let latest = null;
+    (allData || []).forEach(d => { if (d.actualClosingBal != null && (!latest || d.period > latest)) latest = d.period; });
+    if (!latest || !window.computeDormantRuns) return new Set();
+    const r = window.computeDormantRuns(allData, latest);
+    return new Set([...r.zeroTxn, ...r.constCount].map(x => x.code));
+  }, [allData]);
+
   const filtered = React.useMemo(() => {
     let rows = itemSummaries;
     if (exactItem) {
@@ -180,9 +191,10 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
     }
     if (hvFilter === 'HV') rows = rows.filter(d => d.isHV);
     else if (hvFilter === 'Standard') rows = rows.filter(d => !d.isHV);
+    else if (hvFilter === 'Dormant') rows = rows.filter(d => dormantCodes.has(d.itemCode));
     if (cohort !== 'all') rows = rows.filter(d => d.cohort === cohort);
     return rows;
-  }, [itemSummaries, search, exactItem, hvFilter, cohort]);
+  }, [itemSummaries, search, exactItem, hvFilter, cohort, dormantCodes]);
 
   const sorted = React.useMemo(() => {
     const arr = [...filtered];
@@ -280,8 +292,10 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
         <FilterGroup label="Scope">
           <ScopePicker value={scope} onChange={setScope} singlePeriod={singlePeriod} onSinglePeriodChange={setSinglePeriod} allPeriods={allPeriods} totalPeriods={allPeriods.length} />
         </FilterGroup>
-        <FilterGroup label="Type">{['All', 'HV', 'Standard'].map(o => (
-          <button key={o} onClick={() => setHvFilter(o)} style={{
+        <FilterGroup label="Type">{['All', 'HV', 'Standard', 'Dormant'].map(o => (
+          <button key={o} onClick={() => setHvFilter(o)}
+            title={o === 'Dormant' ? 'Items with no movement, or an unchanged count, for a year or more (same list as the Dormant Items page)' : undefined}
+            style={{
             padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font)',
             border: '1px solid', borderColor: hvFilter === o ? 'var(--accent)' : 'var(--border)',
             background: hvFilter === o ? 'rgba(79,70,229,.06)' : 'transparent',
@@ -506,6 +520,9 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
 /* ===== Rich Detail Panel ===== */
 function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 'predicted' }) {
   const series = item.all;
+  // Month under the mouse on the Closing Balance chart (index into series).
+  const [hoverIdx, setHoverIdx] = React.useState(null);
+  React.useEffect(() => { setHoverIdx(null); }, [item.itemCode]);
   const isActual = mode === 'actual';
   const fmtPeriod = p => {
     if (!p) return '';
@@ -598,7 +615,14 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
             </div>
           )}
         </div>
-        <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
+        <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}
+          onMouseMove={e => {
+            const r = e.currentTarget.getBoundingClientRect();
+            const x = (e.clientX - r.left) / r.width * w;
+            const i = series.length === 1 ? 0 : Math.round((x - padL) / cW * (series.length - 1));
+            setHoverIdx(Math.max(0, Math.min(series.length - 1, i)));
+          }}
+          onMouseLeave={() => setHoverIdx(null)}>
           {/* Y-axis grid lines + labels */}
           {yTicks.map((t, i) => {
             const yy = cy(t.val);
@@ -631,6 +655,25 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
               </g>
             );
           })}
+          {/* Hover: guide line + the month and its balances */}
+          {hoverIdx != null && series[hoverIdx] && (() => {
+            const p = series[hoverIdx], x = cx(hoverIdx);
+            const hasA = p.actualClosingBal != null;
+            const bw = 118, bh = hasA ? 50 : 36;
+            const bx = Math.max(padL + 2, Math.min(w - padR - bw, x - bw / 2));
+            const by = padT;
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <line x1={x} y1={padT} x2={x} y2={padT + cH} stroke="#9CA3AF" strokeDasharray="3,3" />
+                <circle cx={x} cy={cy(p.predictedClosingBal || 0)} r={4} fill="var(--accent)" stroke="#fff" strokeWidth={1.5} />
+                {hasA && <circle cx={x} cy={cy(p.actualClosingBal)} r={4} fill="#F59E0B" stroke="#fff" strokeWidth={1.5} />}
+                <rect x={bx} y={by} width={bw} height={bh} rx={6} fill="#111827" opacity=".93" />
+                <text x={bx + 8} y={by + 14} fontSize="10.5" fontWeight="700" fill="#fff">{fmtPeriod(p.period)}</text>
+                <text x={bx + 8} y={by + 28} fontSize="10" fill="#C7D2FE" fontFamily="var(--mono)">Predicted {Math.round(p.predictedClosingBal || 0).toLocaleString('en-US')}</text>
+                {hasA && <text x={bx + 8} y={by + 42} fontSize="10" fill="#FCD34D" fontFamily="var(--mono)">Actual {Math.round(p.actualClosingBal).toLocaleString('en-US')}</text>}
+              </g>
+            );
+          })()}
         </svg>
       </div>
 

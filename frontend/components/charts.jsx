@@ -803,7 +803,20 @@ function ItemForecastsGrid({ allData }) {
 
 
 /* ===== ACTION COUNT BARS — grouped bars across all periods ===== */
+// Month-by-month charts scroll sideways once there are many periods. Open them
+// at the right-hand end so the latest month is the one in view (client asked);
+// time still runs left to right.
+function useScrollToLatest(dep) {
+  const ref = React.useRef(null);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [dep]);
+  return ref;
+}
+
 function ActionCountBars({ periodGroups, mode = 'predicted' }) {
+  const latestRef = useScrollToLatest(periodGroups.length);
   const actions = ['Deliver', 'Return', 'No Change'];
   const colors = { Deliver: '#059669', Return: '#DC2626', 'No Change': '#D97706' };
   const data = periodGroups.map(pg => ({
@@ -824,7 +837,7 @@ function ActionCountBars({ periodGroups, mode = 'predicted' }) {
   return (
     <div>
       <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>Item count per action across {periodCount} period{periodCount === 1 ? '' : 's'}.</div>
-      <div className="h-scroller">
+      <div className="h-scroller" ref={latestRef}>
       <svg width={tW} height={sH} viewBox={`0 0 ${tW} ${sH}`} style={{ display: 'block' }}>
         {[0,.25,.5,.75,1].map((p,i) => { const y = pT + cH - cH * p; return <g key={i}><line x1={pL} y1={y} x2={tW-12} y2={y} stroke="#F3F4F6"/><text x={pL-8} y={y+3.5} textAnchor="end" fontSize="10" fill="var(--text-3)" fontFamily="var(--mono)">{Math.round(max*p)}</text></g>; })}
         {data.map((row, gi) => {
@@ -928,6 +941,7 @@ function HighVelocityItems({ allData, periodGroups, mode = 'predicted' }) {
 
 /* ===== HV vs STANDARD MOVEMENT BY PERIOD ===== */
 function HVMovementByPeriod({ periodGroups, mode = 'predicted' }) {
+  const latestRef = useScrollToLatest(periodGroups.length);
   const fmt = p => { const [y, m] = p.split('-'); const names = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${names[parseInt(m)]} ${y.slice(-2)}`; };
   const data = periodGroups.map(pg => {
     const hv = pg.data.filter(d => d.isHV);
@@ -954,7 +968,7 @@ function HVMovementByPeriod({ periodGroups, mode = 'predicted' }) {
   return (
     <div>
       <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>Deliver and Return counts per period, stacked by HV (dark) vs Standard (light).</div>
-      <div className="h-scroller">
+      <div className="h-scroller" ref={latestRef}>
       <svg width={tW} height={sH} viewBox={`0 0 ${tW} ${sH}`} style={{ display: 'block' }}>
         {[0,.25,.5,.75,1].map((p,i) => { const y = pT + cH - cH * p; return <g key={i}><line x1={pL} y1={y} x2={tW-12} y2={y} stroke="#F3F4F6"/><text x={pL-8} y={y+3.5} textAnchor="end" fontSize="10" fill="var(--text-3)" fontFamily="var(--mono)">{Math.round(max*p)}</text></g>; })}
         {data.map((row, gi) => {
@@ -1206,6 +1220,7 @@ function MapeDistributionChart({ allData, segment = 'all', thresholds: threshold
 
 /* ===== DIRECTION ACCURACY RING ===== */
 function DirectionAccuracyByMonth({ allData }) {
+  const latestRef = useScrollToLatest((allData || []).length);
   // All items vs High-value only (Sonu asked for an HV filter here — the chart
   // was always showing all items).
   const [segment, setSegment] = React.useState('all');
@@ -1268,7 +1283,7 @@ function DirectionAccuracyByMonth({ allData }) {
         <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
           Share of {segment === 'hv' ? 'high-value items' : segment === 'std' ? 'standard items' : 'items'} whose predicted direction matched the actual move, each month. Dashed line = overall average.
         </div>
-        <div className="h-scroller">
+        <div className="h-scroller" ref={latestRef}>
           <svg width="100%" height={svgH} viewBox={`0 0 ${minW} ${svgH}`} preserveAspectRatio="xMinYMid meet" style={{ display: 'block', minWidth: minW }}>
             {/* y gridlines 0 / 50 / 100 */}
             {[0, 0.5, 1].map((g, i) => {
