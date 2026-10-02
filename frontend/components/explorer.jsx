@@ -532,6 +532,17 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
   // Month under the mouse on the Closing Balance chart (index into series).
   const [hoverIdx, setHoverIdx] = React.useState(null);
   React.useEffect(() => { setHoverIdx(null); }, [item.itemCode]);
+  // The chart and the Action History strip share the hovered month. When the
+  // hover comes from the chart the strip scrolls to bring that month's box into
+  // view; when it comes from the strip itself it must not move under the mouse.
+  const hoverSrc = React.useRef(null);
+  const ribbonRef = React.useRef(null);
+  React.useEffect(() => {
+    const el = ribbonRef.current;
+    if (hoverIdx == null || hoverSrc.current !== 'chart' || !el || el.scrollWidth <= el.clientWidth) return;
+    const cw = el.scrollWidth / series.length;
+    el.scrollLeft = (hoverIdx + 0.5) * cw - el.clientWidth / 2;
+  }, [hoverIdx]);
   const isActual = mode === 'actual';
   const fmtPeriod = p => {
     if (!p) return '';
@@ -629,6 +640,7 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
             const r = e.currentTarget.getBoundingClientRect();
             const x = (e.clientX - r.left) / r.width * w;
             const i = series.length === 1 ? 0 : Math.round((x - padL) / cW * (series.length - 1));
+            hoverSrc.current = 'chart';
             setHoverIdx(Math.max(0, Math.min(series.length - 1, i)));
           }}
           onMouseLeave={() => setHoverIdx(null)}>
@@ -695,13 +707,19 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
           least 20px wide so the D/R/N letter stays legible even on multi-year
           backtests; it scrolls horizontally via the themed h-scroller. */}
       <div>
-        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text-2)' }}>Action History <span style={{ fontWeight: 500, color: 'var(--text-3)', fontSize: 10 }}>· {isActual ? 'actual' : 'predicted'}</span></div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)' }}>Action History <span style={{ fontWeight: 500, color: 'var(--text-3)', fontSize: 10 }}>· {isActual ? 'actual' : 'predicted'}</span></div>
+          {hoverIdx != null && series[hoverIdx] && (() => {
+            const a = fcAction(series[hoverIdx], mode);
+            return <div style={{ fontSize: 10.5, fontWeight: 700, color: a ? ac(a) : 'var(--text-3)' }}><span style={{ color: 'var(--text)', fontFamily: 'var(--mono)' }}>{fmtPeriod(series[hoverIdx].period)}</span> · {a || 'no actual yet'}</div>;
+          })()}
+        </div>
         {(() => {
           const cellMin = 20;
           const ribbonW = Math.max(w, series.length * cellMin);
           const cw = ribbonW / series.length;
           return (
-            <div className="h-scroller">
+            <div className="h-scroller" ref={ribbonRef} onMouseLeave={() => setHoverIdx(null)}>
               <svg width={ribbonW} height={ribbonH} viewBox={`0 0 ${ribbonW} ${ribbonH}`} style={{ display: 'block' }}>
                 {series.map((p, i) => {
                   const xp = i * cw;
@@ -712,9 +730,10 @@ function RichDetailPanel({ item, abc, onClose, ac, abg, fmt, cohortMeta, mode = 
                   const op = !hasActual ? 1 : (a === 'No Change' ? .3 : .85);
                   const textCol = hasActual ? '#fff' : 'var(--text-3)';
                   return (
-                    <g key={p.period}>
+                    <g key={p.period} onMouseEnter={() => { hoverSrc.current = 'ribbon'; setHoverIdx(i); }}>
                       <title>{`${fmtPeriod(p.period)}: ${hasActual ? a : 'no actual yet'}`}</title>
-                      <rect x={xp + 0.5} y={0} width={Math.max(cw - 1, 1)} height={ribbonH} fill={fill} opacity={op} rx={2} />
+                      <rect x={xp + 0.5} y={0} width={Math.max(cw - 1, 1)} height={ribbonH} fill={fill} opacity={hoverIdx === i && hasActual ? 1 : op} rx={2} />
+                      {hoverIdx === i && <rect x={xp + 1.25} y={1} width={Math.max(cw - 2.5, 1)} height={ribbonH - 2} fill="none" stroke="#111827" strokeWidth={2} rx={2} />}
                       {cw >= 16 && <text x={xp + cw / 2} y={ribbonH / 2 + 4} textAnchor="middle" fontSize="11" fontWeight="700" fill={textCol}>{letter}</text>}
                     </g>
                   );
