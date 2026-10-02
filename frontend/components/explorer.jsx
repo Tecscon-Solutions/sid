@@ -170,16 +170,23 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
       .sort((a, b) => (a.label || '').localeCompare(b.label || '')),
     [itemSummaries]);
 
-  // Type → Dormant: the items on the Dormant Items page (a year or more with no
-  // movement or an unchanged count, from actual history) — the same rule, so
-  // the two lists always agree.
-  const dormantCodes = React.useMemo(() => {
+  // Type → Dormant: the Dormant Items page's rule (no movement or an unchanged
+  // count, from actual history), so with the scope on all periods the two lists
+  // agree.
+  // It follows the Scope: only the scoped months are looked at, and an item is
+  // dormant when it sat still for a year of them — or for all of them when the
+  // scope is shorter than a year (e.g. Last 6 months = no movement in those 6).
+  const { dormantCodes, dormantMonths } = React.useMemo(() => {
+    const inScope = new Set(scopedPeriods);
+    const rows = (allData || []).filter(d => inScope.has(d.period));
+    const withActual = new Set();
     let latest = null;
-    (allData || []).forEach(d => { if (d.actualClosingBal != null && (!latest || d.period > latest)) latest = d.period; });
-    if (!latest || !window.computeDormantRuns) return new Set();
-    const r = window.computeDormantRuns(allData, latest);
-    return new Set([...r.zeroTxn, ...r.constCount].map(x => x.code));
-  }, [allData]);
+    rows.forEach(d => { if (d.actualClosingBal != null) { withActual.add(d.period); if (!latest || d.period > latest) latest = d.period; } });
+    const need = Math.min(12, withActual.size);
+    if (!latest || !need || !window.computeDormantRuns) return { dormantCodes: new Set(), dormantMonths: 0 };
+    const r = window.computeDormantRuns(rows, latest, need);
+    return { dormantCodes: new Set([...r.zeroTxn, ...r.constCount].map(x => x.code)), dormantMonths: need };
+  }, [allData, scopedPeriods]);
 
   const filtered = React.useMemo(() => {
     let rows = itemSummaries;
@@ -312,7 +319,7 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
         <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '-4px 0 10px', flexShrink: 0 }}>
           {hvFilter === 'HV' && <>Showing <b style={{ color: 'var(--text-2)' }}>High Value</b> items only — the SKUs flagged high value in the forecast.</>}
           {hvFilter === 'Standard' && <>Showing <b style={{ color: 'var(--text-2)' }}>Standard</b> items only — everything not flagged high value.</>}
-          {hvFilter === 'Dormant' && <>Showing <b style={{ color: 'var(--text-2)' }}>Dormant</b> items only — no movement, or an unchanged count, for a year or more in actual history ({dormantCodes.size} item{dormantCodes.size === 1 ? '' : 's'}; the same list as the Dormant Items page). This is separate from the Dormant behaviour tab above, which looks only at the last 6 periods.</>}
+          {hvFilter === 'Dormant' && <>Showing <b style={{ color: 'var(--text-2)' }}>Dormant</b> items only — {dormantMonths ? <>no movement, or an unchanged count, for {dormantMonths >= 12 ? 'a year or more' : `all ${dormantMonths} month${dormantMonths === 1 ? '' : 's'}`} of actual history in the selected scope ({dormantCodes.size} item{dormantCodes.size === 1 ? '' : 's'}). Change the Scope and the list follows.</> : <>the selected scope has no months with actuals yet, so nothing can be marked dormant.</>} This is separate from the Dormant behaviour tab above, which looks only at the last 6 periods.</>}
         </div>
       )}
 

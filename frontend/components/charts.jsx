@@ -391,7 +391,8 @@ function ItemForecastCard({ item }) {
   const ZSTEP = 0.1, ZMIN = 0.6, ZMAX = 2.0;
   const zoomIn  = () => setZoom(z => Math.min(ZMAX, Math.round((z + ZSTEP) * 10) / 10));
   const zoomOut = () => setZoom(z => Math.max(ZMIN, Math.round((z - ZSTEP) * 10) / 10));
-  const { periods } = item;
+  // Newest month first, left to right (client asked for descending order).
+  const periods = React.useMemo(() => item.periods.slice().sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0)), [item.periods]);
   // Chart renders eagerly. We used to lazy-mount on scroll-into-view, but
   // the scroll-root detection was unreliable inside the components iframe
   // and visible cards would sit on a spinner until the user nudged the
@@ -834,14 +835,15 @@ function ItemForecastsGrid({ allData }) {
 
 
 /* ===== ACTION COUNT BARS — grouped bars across all periods ===== */
-// Month-by-month charts scroll sideways once there are many periods. Open them
-// at the right-hand end so the latest month is the one in view (client asked);
-// time still runs left to right.
+// Month-by-month charts run newest month first, left to right (client asked for
+// descending order), and scroll sideways once there are many periods. Keep them
+// opened at the left-hand end, where the latest month is.
+const newestFirst = (a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0);
 function useScrollToLatest(dep) {
   const ref = React.useRef(null);
   React.useLayoutEffect(() => {
     const el = ref.current;
-    if (el) el.scrollLeft = el.scrollWidth;
+    if (el) el.scrollLeft = 0;
   }, [dep]);
   return ref;
 }
@@ -850,7 +852,7 @@ function ActionCountBars({ periodGroups, mode = 'predicted' }) {
   const latestRef = useScrollToLatest(periodGroups.length);
   const actions = ['Deliver', 'Return', 'No Change'];
   const colors = { Deliver: '#059669', Return: '#DC2626', 'No Change': '#D97706' };
-  const data = periodGroups.map(pg => ({
+  const data = periodGroups.slice().sort(newestFirst).map(pg => ({
     period: pg.period,
     counts: actions.map(a => pg.data.filter(d => fcAction(d, mode) === a).length),
   }));
@@ -974,7 +976,7 @@ function HighVelocityItems({ allData, periodGroups, mode = 'predicted' }) {
 function HVMovementByPeriod({ periodGroups, mode = 'predicted' }) {
   const latestRef = useScrollToLatest(periodGroups.length);
   const fmt = p => { const [y, m] = p.split('-'); const names = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${names[parseInt(m)]} ${y.slice(-2)}`; };
-  const data = periodGroups.map(pg => {
+  const data = periodGroups.slice().sort(newestFirst).map(pg => {
     const hv = pg.data.filter(d => d.isHV);
     const std = pg.data.filter(d => !d.isHV);
     return {
@@ -1274,7 +1276,7 @@ function DirectionAccuracyByMonth({ allData }) {
       if (d.directionCorrect) m[k].correct++;
     });
     return Object.values(m)
-      .sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : 0))
+      .sort(newestFirst)
       .map(r => ({ ...r, pct: r.total ? r.correct / r.total : 0 }));
   }, [withActuals]);
 
