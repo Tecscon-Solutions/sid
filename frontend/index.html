@@ -183,10 +183,8 @@ fetch('data.json').then(r=>r.json()).then(d=>{ window.__RAW_DATA = d; window.dis
 </script>
 <div id="root"></div>
 
-<script type="text/babel">
-// All components live in separate .jsx files (see <head>). This bottom
-// script just mounts the root once everything is loaded and compiled.
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-</script>
+<!-- The root is mounted once, at the end of app.jsx (the last component file).
+     A second createRoot() here used to mount it again on the same node, which
+     React warns about and which threw removeChild errors on reload. -->
 </body>
 </html>

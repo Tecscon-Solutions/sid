@@ -94,7 +94,8 @@ function NewItemsPage({ allData }) {
   }, [hasChart]);
   const onPanStart = e => {
     const el = frameRef.current;
-    if (!el || e.button !== 0) return;
+    // Nothing to pan when the chart fits the frame — leave clicks alone.
+    if (!el || e.button !== 0 || (el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)) return;
     dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     draggedRef.current = false;
   };

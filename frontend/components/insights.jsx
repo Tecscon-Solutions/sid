@@ -266,9 +266,10 @@ function ActionCalendarHeatmap({ data }) {
   const items = React.useMemo(() => {
     let arr = Object.values(byItem);
     if (hvOnly) arr = arr.filter(it => it.isHV);
-    // streak: count of consecutive same action at the end
+    // streak: count of consecutive same action at the end (the latest months).
+    // `periods` is newest-first for display, so walk it oldest-first here.
     arr = arr.map(it => {
-      const sortedActions = periods.map(p => it.byPeriod[p]?.predictedAction).filter(Boolean);
+      const sortedActions = periods.slice().reverse().map(p => it.byPeriod[p]?.predictedAction).filter(Boolean);
       let streak = 0;
       const last = sortedActions[sortedActions.length - 1];
       for (let i = sortedActions.length - 1; i >= 0; i--) { if (sortedActions[i] === last) streak++; else break; }

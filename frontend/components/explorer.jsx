@@ -171,21 +171,32 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
     [itemSummaries]);
 
   // Type → Dormant: the Dormant Items page's rule (no movement or an unchanged
-  // count, from actual history), so with the scope on all periods the two lists
-  // agree.
+  // count), so with the scope on all periods the two lists agree, apart from
+  // items whose quiet stretch only reaches a year once the forecast months are
+  // counted.
   // It follows the Scope: only the scoped months are looked at, and an item is
-  // dormant when it sat still for a year of them — or for all of them when the
+  // dormant when it sits still for a year of them — or for all of them when the
   // scope is shorter than a year (e.g. Last 6 months = no movement in those 6).
-  const { dormantCodes, dormantMonths } = React.useMemo(() => {
+  // The scope can reach into months that have no actuals yet (Last 12 months
+  // includes the forecast months), so those months go by the forecast.
+  const { dormantCodes, dormantMonths, dormantFuture } = React.useMemo(() => {
     const inScope = new Set(scopedPeriods);
-    const rows = (allData || []).filter(d => inScope.has(d.period));
-    const withActual = new Set();
     let latest = null;
-    rows.forEach(d => { if (d.actualClosingBal != null) { withActual.add(d.period); if (!latest || d.period > latest) latest = d.period; } });
-    const need = Math.min(12, withActual.size);
-    if (!latest || !need || !window.computeDormantRuns) return { dormantCodes: new Set(), dormantMonths: 0 };
+    const seen = new Set(), futureSeen = new Set();
+    const rows = (allData || []).filter(d => inScope.has(d.period)).map(d => {
+      seen.add(d.period);
+      if (!latest || d.period > latest) latest = d.period;
+      if (d.actualClosingBal != null) return d;
+      futureSeen.add(d.period);
+      return { ...d, actualClosingBal: d.predictedClosingBal, actualAction: d.predictedAction };
+    });
+    const need = Math.min(12, seen.size);
+    if (!latest || !need || !window.computeDormantRuns) return { dormantCodes: new Set(), dormantMonths: 0, dormantFuture: 0 };
     const r = window.computeDormantRuns(rows, latest, need);
-    return { dormantCodes: new Set([...r.zeroTxn, ...r.constCount].map(x => x.code)), dormantMonths: need };
+    // An unchanged count needs at least two months to mean anything; with a
+    // single month in scope only a No Change month counts.
+    const hits = need >= 2 ? [...r.zeroTxn, ...r.constCount] : r.zeroTxn;
+    return { dormantCodes: new Set(hits.map(x => x.code)), dormantMonths: need, dormantFuture: futureSeen.size };
   }, [allData, scopedPeriods]);
 
   const filtered = React.useMemo(() => {
@@ -319,7 +330,7 @@ function ItemExplorerPage({ allData, period, mode = 'predicted' }) {
         <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '-4px 0 10px', flexShrink: 0 }}>
           {hvFilter === 'HV' && <>Showing <b style={{ color: 'var(--text-2)' }}>High Value</b> items only — the SKUs flagged high value in the forecast.</>}
           {hvFilter === 'Standard' && <>Showing <b style={{ color: 'var(--text-2)' }}>Standard</b> items only — everything not flagged high value.</>}
-          {hvFilter === 'Dormant' && <>Showing <b style={{ color: 'var(--text-2)' }}>Dormant</b> items only — {dormantMonths ? <>no movement, or an unchanged count, for {dormantMonths >= 12 ? 'a year or more' : `all ${dormantMonths} month${dormantMonths === 1 ? '' : 's'}`} of actual history in the selected scope ({dormantCodes.size} item{dormantCodes.size === 1 ? '' : 's'}). Change the Scope and the list follows.</> : <>the selected scope has no months with actuals yet, so nothing can be marked dormant.</>} This is separate from the Dormant behaviour tab above, which looks only at the last 6 periods.</>}
+          {hvFilter === 'Dormant' && <>Showing <b style={{ color: 'var(--text-2)' }}>Dormant</b> items only — {dormantMonths ? <>no movement, or an unchanged count, for {dormantMonths >= 12 ? 'a year or more' : `all ${dormantMonths} month${dormantMonths === 1 ? '' : 's'}`} in the selected scope ({dormantCodes.size} item{dormantCodes.size === 1 ? '' : 's'}){dormantFuture > 0 ? ` — actual history where it exists, the forecast for the ${dormantFuture} month${dormantFuture === 1 ? '' : 's'} with no actuals yet` : ''}. Change the Scope and the list follows.</> : <>the selected scope has no data.</>} This is separate from the Dormant behaviour tab above, which looks only at the most recent periods.</>}
         </div>
       )}
 

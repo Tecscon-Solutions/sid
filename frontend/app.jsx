@@ -552,7 +552,7 @@ function MovementTab({ data, periodGroups, mode = 'predicted', hasActuals = fals
 
       {/* Row 1: Action counts (left) + HV breakdown (right) */}
       <Card title={`Action Count by Period${modeTag} · ${periodGroups.length} period${periodGroups.length === 1 ? '' : 's'}`} style={{ gridColumn: 'span 3' }}
-        info={`For each month, how many items fall into Deliver, Return, and No Change. Read it left-to-right to spot trends — e.g. returns creeping up over the months.`}>
+        info={`For each month, how many items fall into Deliver, Return, and No Change. The latest month is on the left, older months to the right — compare along the row to spot trends, e.g. returns creeping up over the months.`}>
         <ActionCountBars periodGroups={periodGroups} mode={mode} />
       </Card>
       <Card title={'HV vs Standard · items per action' + modeTag} style={{ gridColumn: 'span 3' }}
