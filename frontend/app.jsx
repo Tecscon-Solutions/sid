@@ -831,20 +831,18 @@ function AccuracyTab({ periodGroups, allData, metric = 'mape' }) {
 }
 
 // Small (i) beside a column header: hover (or click) for what the column means.
-// The bubble is position: fixed so the table's scroll frame can't clip it.
+// The bubble hangs off the icon itself (absolute, right-aligned so it opens
+// back into the table). It used to be position: fixed from the icon's screen
+// rect, but the page is zoomed to 125% on non-Windows screens, which threw the
+// fixed coordinates off and pushed the bubble out of the frame.
 function ColInfo({ text, title }) {
-  const [pos, setPos] = React.useState(null);
-  const show = e => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const W = 260;
-    setPos({ left: Math.max(8, Math.min(window.innerWidth - W - 8, r.left + r.width / 2 - W / 2)), top: r.bottom + 8, W });
-  };
+  const [open, setOpen] = React.useState(false);
   return (
-    <span onMouseEnter={show} onMouseLeave={() => setPos(null)} onClick={e => { e.stopPropagation(); pos ? setPos(null) : show(e); }}
-      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 13, height: 13, marginLeft: 4, borderRadius: '50%', border: '1px solid var(--text-3)', color: 'var(--text-3)', fontSize: 9, fontWeight: 700, fontStyle: 'italic', textTransform: 'none', letterSpacing: 0, cursor: 'help', verticalAlign: 'middle', lineHeight: 1 }}>
+    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 12, height: 12, marginLeft: 4, borderRadius: '50%', border: '1px solid currentColor', color: open ? 'var(--accent)' : 'var(--text-3)', fontSize: 8, fontWeight: 700, textTransform: 'none', letterSpacing: 0, cursor: 'help', verticalAlign: '-1px', lineHeight: 1 }}>
       i
-      {pos && (
-        <span style={{ position: 'fixed', left: pos.left, top: pos.top, width: pos.W, zIndex: 2000, background: '#111827', color: '#fff', padding: '9px 11px', borderRadius: 8, fontSize: 11, fontWeight: 400, fontStyle: 'normal', lineHeight: 1.5, textAlign: 'left', textTransform: 'none', letterSpacing: 0, whiteSpace: 'normal', boxShadow: '0 8px 24px rgba(0,0,0,.25)', cursor: 'default' }}>
+      {open && (
+        <span style={{ position: 'absolute', top: 'calc(100% + 8px)', right: -10, width: 250, zIndex: 50, background: '#111827', color: '#fff', padding: '9px 11px', borderRadius: 8, fontSize: 11, fontWeight: 400, lineHeight: 1.5, textAlign: 'left', textTransform: 'none', letterSpacing: 0, whiteSpace: 'normal', boxShadow: '0 8px 24px rgba(0,0,0,.25)', cursor: 'default' }}>
           <b style={{ display: 'block', marginBottom: 3 }}>{title}</b>{text}
         </span>
       )}
@@ -985,13 +983,13 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
     { col: 'prevClosingBal',      label: 'Prev Bal',      width: '8%',  align: 'right', sortable: true },
     { col: 'predictedClosingBal', label: 'Pred. Bal',     width: '8%',  align: 'right', sortable: true },
     ...(hasActuals ? [{ col: 'actualClosingBal', label: 'Actual Bal', width: '8%', align: 'right', sortable: true }] : []),
-    ...(hasActuals ? [{ col: 'error', label: 'Actual (Δ)', width: '7%', align: 'right', sortable: true,
+    ...(hasActuals ? [{ col: 'error', label: 'Actual (Δ)', width: '9%', align: 'right', sortable: true,
       info: 'Actual (Δ) = Actual Bal − Pred. Bal for that month. How far the real closing balance landed from the forecast, in units. Green (+) means the actual came in above the forecast, red (−) means below.' }] : []),
-    { col: 'difference',          label: 'Pred. Δ',       width: '7%',  align: 'right', sortable: true,
+    { col: 'difference',          label: 'Pred. Δ',       width: '8%',  align: 'right', sortable: true,
       info: 'Pred. Δ = Pred. Bal − Prev Bal. The change the model expects in the balance this month, in units. Positive means stock going out to site (Deliver), negative means stock coming back (Return).' },
-    ...(hasActuals ? [{ col: 'ape', label: 'APE %', width: '6%', align: 'right', sortable: true,
+    ...(hasActuals ? [{ col: 'ape', label: 'APE %', width: '8%', align: 'right', sortable: true,
       info: 'APE % = |Actual Bal − Pred. Bal| ÷ Actual Bal × 100, for this one month only. The size of the forecast error as a percentage, ignoring direction. Lower is better.' }] : []),
-    { col: 'itemMape',            label: 'MAPE',           width: '6%',  align: 'right', sortable: true,
+    { col: 'itemMape',            label: 'MAPE',           width: '8%',  align: 'right', sortable: true,
       info: "MAPE = the average of this item's APE % across its months, as reported by the model. It shows how reliable the forecast is for the item overall, not just this month. Under 50% is good, over 100% is unreliable." },
     // The pred-cost columns moved to the dedicated Costing page (CostingPage)
     // — Sonu found them crowding the inventory details here.
@@ -1120,9 +1118,10 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
               <tr>
                 {cols.map(h => (
                   <th key={h.col} onClick={() => h.sortable && handleSort(h.col)} style={thStyle(h)}>
-                    {h.label}{h.info && <ColInfo text={h.info} title={h.label} />}{h.cur && <span style={{ whiteSpace: 'nowrap' }}> (<DirhamSign s="1em" style={{ marginRight: 0, verticalAlign: '-0.12em' }} />)</span>}{h.sortable && (sortCol === h.col
+                    {/* The label may wrap, but its last word stays on one line with the (i) and the sort caret. */}
+                    {h.label.includes(' ') ? h.label.slice(0, h.label.lastIndexOf(' ') + 1) : ''}{h.cur && <span style={{ whiteSpace: 'nowrap' }}> (<DirhamSign s="1em" style={{ marginRight: 0, verticalAlign: '-0.12em' }} />)</span>}<span style={{ whiteSpace: 'nowrap' }}>{h.label.slice(h.label.lastIndexOf(' ') + 1)}{h.info && <ColInfo text={h.info} title={h.label} />}{h.sortable && (sortCol === h.col
                       ? <span style={{ fontSize: 12, marginLeft: 3, color: 'var(--accent)' }}>{sortDir === 'asc' ? '▲' : '▼'}</span>
-                      : <span style={{ fontSize: 9, marginLeft: 3, color: 'var(--text-3)', opacity: .6 }}>↕</span>)}
+                      : <span style={{ fontSize: 9, marginLeft: 3, color: 'var(--text-3)', opacity: .6 }}>↕</span>)}</span>
                   </th>
                 ))}
               </tr>
