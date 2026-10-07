@@ -830,22 +830,37 @@ function AccuracyTab({ periodGroups, allData, metric = 'mape' }) {
   );
 }
 
-// Small (i) beside a column header: hover (or click) for what the column means.
-// The bubble hangs off the icon itself (absolute, right-aligned so it opens
-// back into the table). It used to be position: fixed from the icon's screen
-// rect, but the page is zoomed to 125% on non-Windows screens, which threw the
-// fixed coordinates off and pushed the bubble out of the frame.
+// Small (i) beside a column header: hover (or tap) for what the column means.
+// The note opens ABOVE the header, over the toolbar, so it never covers the
+// table rows (Sonu found a bubble over the rows awkward). It is rendered into
+// <body> with position: fixed so the table's scroll frame can't clip it. The
+// page may be zoomed (125% on non-Windows screens): getBoundingClientRect gives
+// zoomed pixels while fixed left/top are read in unzoomed CSS pixels, so the
+// rect is divided by the zoom.
 function ColInfo({ text, title }) {
-  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  const [pos, setPos] = React.useState(null);
+  const show = () => {
+    const el = ref.current;
+    if (!el) return;
+    const z = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    const r = el.getBoundingClientRect();
+    const W = 200;
+    const vw = window.innerWidth / z;
+    const cx = (r.left + r.width / 2) / z;
+    const top = (el.closest('th') || el).getBoundingClientRect().top;   // sit above the whole header cell
+    setPos({ left: Math.max(8, Math.min(vw - W - 8, cx - W / 2)), bottom: window.innerHeight / z - top / z + 8, W, arrow: cx });
+  };
   return (
-    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
-      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 12, height: 12, marginLeft: 4, borderRadius: '50%', border: '1px solid currentColor', color: open ? 'var(--accent)' : 'var(--text-3)', fontSize: 8, fontWeight: 700, textTransform: 'none', letterSpacing: 0, cursor: 'help', verticalAlign: '-1px', lineHeight: 1 }}>
-      i
-      {open && (
-        <span style={{ position: 'absolute', top: 'calc(100% + 8px)', right: -10, width: 250, zIndex: 50, background: '#111827', color: '#fff', padding: '9px 11px', borderRadius: 8, fontSize: 11, fontWeight: 400, lineHeight: 1.5, textAlign: 'left', textTransform: 'none', letterSpacing: 0, whiteSpace: 'normal', boxShadow: '0 8px 24px rgba(0,0,0,.25)', cursor: 'default' }}>
-          <b style={{ display: 'block', marginBottom: 3 }}>{title}</b>{text}
-        </span>
-      )}
+    <span ref={ref} onMouseEnter={show} onMouseLeave={() => setPos(null)} onClick={e => { e.stopPropagation(); pos ? setPos(null) : show(); }}
+      style={{ display: 'inline-block', marginLeft: 3, fontSize: 9, lineHeight: 1, color: pos ? 'var(--accent)' : 'var(--text-3)', opacity: pos ? 1 : .7, cursor: 'help', verticalAlign: 'super', textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>
+      ⓘ
+      {pos && ReactDOM.createPortal(
+        <div style={{ position: 'fixed', left: pos.left, bottom: pos.bottom, width: pos.W, zIndex: 3000, background: 'rgba(17,24,39,.78)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', color: '#fff', padding: '6px 9px', borderRadius: 7, fontSize: 10, fontWeight: 400, lineHeight: 1.4, textAlign: 'left', boxShadow: '0 4px 14px rgba(0,0,0,.18)', pointerEvents: 'none', fontFamily: 'var(--font)' }}>
+          <b style={{ display: 'block', marginBottom: 1, fontSize: 10.5 }}>{title}</b>{text}
+          <span style={{ position: 'absolute', bottom: -4, left: Math.max(10, Math.min(pos.W - 18, pos.arrow - pos.left - 4)), width: 8, height: 8, background: 'rgba(17,24,39,.78)', transform: 'rotate(45deg)' }} />
+        </div>,
+        document.body)}
     </span>
   );
 }
@@ -984,13 +999,13 @@ function ItemsTableTab({ data, allPeriods, standalone }) {
     { col: 'predictedClosingBal', label: 'Pred. Bal',     width: '8%',  align: 'right', sortable: true },
     ...(hasActuals ? [{ col: 'actualClosingBal', label: 'Actual Bal', width: '8%', align: 'right', sortable: true }] : []),
     ...(hasActuals ? [{ col: 'error', label: 'Actual (Δ)', width: '9%', align: 'right', sortable: true,
-      info: 'Actual (Δ) = Actual Bal − Pred. Bal for that month. How far the real closing balance landed from the forecast, in units. Green (+) means the actual came in above the forecast, red (−) means below.' }] : []),
+      info: 'Actual Bal − Pred. Bal. Green: actual above forecast, red: below.' }] : []),
     { col: 'difference',          label: 'Pred. Δ',       width: '8%',  align: 'right', sortable: true,
-      info: 'Pred. Δ = Pred. Bal − Prev Bal. The change the model expects in the balance this month, in units. Positive means stock going out to site (Deliver), negative means stock coming back (Return).' },
+      info: 'Pred. Bal − Prev Bal. Expected change this month: + Deliver, − Return.' },
     ...(hasActuals ? [{ col: 'ape', label: 'APE %', width: '8%', align: 'right', sortable: true,
-      info: 'APE % = |Actual Bal − Pred. Bal| ÷ Actual Bal × 100, for this one month only. The size of the forecast error as a percentage, ignoring direction. Lower is better.' }] : []),
+      info: '|Actual − Pred.| ÷ Actual × 100 for this month. Lower is better.' }] : []),
     { col: 'itemMape',            label: 'MAPE',           width: '8%',  align: 'right', sortable: true,
-      info: "MAPE = the average of this item's APE % across its months, as reported by the model. It shows how reliable the forecast is for the item overall, not just this month. Under 50% is good, over 100% is unreliable." },
+      info: "Average APE % of this item over all its months. Under 50% is good." },
     // The pred-cost columns moved to the dedicated Costing page (CostingPage)
     // — Sonu found them crowding the inventory details here.
   ];
