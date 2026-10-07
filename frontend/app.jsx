@@ -830,7 +830,8 @@ function AccuracyTab({ periodGroups, allData, metric = 'mape' }) {
   );
 }
 
-// Small (i) beside a column header: hover (or tap) for what the column means.
+// Small (i) beside a column header: click it for what the column means; click
+// it again, anywhere else, or scroll to close. Only one note is open at a time.
 // The note opens ABOVE the header, over the toolbar, so it never covers the
 // table rows (Sonu found a bubble over the rows awkward). It is rendered into
 // <body> with position: fixed so the table's scroll frame can't clip it. The
@@ -840,7 +841,24 @@ function AccuracyTab({ periodGroups, allData, metric = 'mape' }) {
 function ColInfo({ text, title }) {
   const ref = React.useRef(null);
   const [pos, setPos] = React.useState(null);
+  React.useEffect(() => {
+    if (!pos) return;
+    const close = e => { if (!ref.current || !ref.current.contains(e.target)) setPos(null); };
+    const closeAll = () => setPos(null);
+    const other = e => { if (e.detail !== ref.current) setPos(null); };
+    document.addEventListener('mousedown', close, true);
+    window.addEventListener('scroll', closeAll, true);
+    window.addEventListener('resize', closeAll);
+    window.addEventListener('colinfo-open', other);
+    return () => {
+      document.removeEventListener('mousedown', close, true);
+      window.removeEventListener('scroll', closeAll, true);
+      window.removeEventListener('resize', closeAll);
+      window.removeEventListener('colinfo-open', other);
+    };
+  }, [pos]);
   const show = () => {
+    window.dispatchEvent(new CustomEvent('colinfo-open', { detail: ref.current }));
     const el = ref.current;
     if (!el) return;
     const z = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
@@ -852,8 +870,8 @@ function ColInfo({ text, title }) {
     setPos({ left: Math.max(8, Math.min(vw - W - 8, cx - W / 2)), bottom: window.innerHeight / z - top / z + 8, W, arrow: cx });
   };
   return (
-    <span ref={ref} onMouseEnter={show} onMouseLeave={() => setPos(null)} onClick={e => { e.stopPropagation(); pos ? setPos(null) : show(); }}
-      style={{ display: 'inline-block', marginLeft: 3, fontSize: 9, lineHeight: 1, color: pos ? 'var(--accent)' : 'var(--text-3)', opacity: pos ? 1 : .7, cursor: 'help', verticalAlign: 'super', textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>
+    <span ref={ref} title="What this column means" onClick={e => { e.stopPropagation(); pos ? setPos(null) : show(); }}
+      style={{ display: 'inline-block', marginLeft: 3, fontSize: 10, lineHeight: 1, color: 'var(--accent)', opacity: 1, cursor: 'pointer', verticalAlign: 'super', padding: '0 2px', textTransform: 'none', letterSpacing: 0, fontWeight: 700 }}>
       ⓘ
       {pos && ReactDOM.createPortal(
         <div style={{ position: 'fixed', left: pos.left, bottom: pos.bottom, width: pos.W, zIndex: 3000, background: 'rgba(17,24,39,.78)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', color: '#fff', padding: '6px 9px', borderRadius: 7, fontSize: 10, fontWeight: 400, lineHeight: 1.4, textAlign: 'left', boxShadow: '0 4px 14px rgba(0,0,0,.18)', pointerEvents: 'none', fontFamily: 'var(--font)' }}>
