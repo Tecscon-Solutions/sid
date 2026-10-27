@@ -15,6 +15,12 @@
 // in app.jsx as well would be a "Identifier already declared" SyntaxError.
 const { useState, useEffect, useMemo } = React;
 
+/* Monthly rows only. Since Oct 2026 forecast_predictions also holds quarterly /
+   half-yearly / yearly rows (grain column, labels like '2027-01_to_2027-03').
+   They would leak into every monthly view, the year-range query included,
+   because those labels sort inside the year. */
+const isMonthlyRow = (r) => (r.grain == null || r.grain === 'monthly') && !String(r.year_month || '').includes('_to_');
+
 /* Predicted ⇄ Actual accessors. The Overview tab has a toggle that flips
    every card between the model's prediction and what actually happened
    (only meaningful for Backtest months where actuals exist).
@@ -338,7 +344,7 @@ function useSupabaseData() {
         .range(offset, offset + PAGE - 1);
       if (err) throw err;
       if (!data || !data.length) break;
-      all.push(...data);
+      all.push(...data.filter(isMonthlyRow));
       if (data.length < PAGE) break;
       offset += PAGE;
     }
@@ -360,7 +366,7 @@ function useSupabaseData() {
         .range(offset, offset + PAGE - 1);
       if (err) throw err;
       if (!data || !data.length) break;
-      all.push(...data);
+      all.push(...data.filter(isMonthlyRow));
       if (data.length < PAGE) break;
       offset += PAGE;
     }

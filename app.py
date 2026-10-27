@@ -683,6 +683,15 @@ def _classify_action(delta: float | None) -> str | None:
     return "No Change"
 
 
+def _monthly_only(rows: list[dict]) -> list[dict]:
+    """Keep only monthly forecast rows. Since Oct 2026 the same table also holds
+    quarterly / half-yearly / yearly rows (grain column, period labels like
+    '2027-01_to_2027-03'); those would otherwise leak into every monthly view,
+    including the year-range queries, because the labels sort inside the year."""
+    return [r for r in rows
+            if (r.get("grain") in (None, "monthly")) and "_to_" not in str(r.get("year_month") or "")]
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _fetch_supabase_runs(url: str, key: str) -> list[dict]:
     """Return all runs ordered newest → oldest. Cached briefly so the run
@@ -717,7 +726,7 @@ def _fetch_supabase_predictions(url: str, key: str, run_id: int) -> list[dict]:
         page = list(resp.data or [])
         if not page:
             break
-        all_rows.extend(page)
+        all_rows.extend(_monthly_only(page))
         if len(page) < PAGE:
             break
         offset += PAGE
@@ -861,7 +870,7 @@ def _fetch_all_supabase_predictions(url: str, key: str) -> list[dict]:
         page = list(resp.data or [])
         if not page:
             break
-        all_rows.extend(page)
+        all_rows.extend(_monthly_only(page))
         if len(page) < PAGE:
             break
         offset += PAGE
@@ -930,7 +939,7 @@ def _fetch_supabase_predictions_by_year(url: str, key: str, year: int) -> list[d
         page = list(resp.data or [])
         if not page:
             break
-        all_rows.extend(page)
+        all_rows.extend(_monthly_only(page))
         if len(page) < PAGE:
             break
         offset += PAGE
@@ -1267,7 +1276,7 @@ def _reload_all_from_supabase() -> bool:
 # Supabase hook + mappers used by everything else; `app` is the entry
 # component and must be last.
 _COMPONENT_FILES = [
-    "sidebar", "charts", "explorer", "insights", "upload", "datasource", "actionflow", "newitems", "dormant", "movers", "costing", "cashflow", "iteminsight",
+    "sidebar", "charts", "explorer", "insights", "upload", "datasource", "actionflow", "newitems", "dormant", "movers", "costing", "cashflow", "iteminsight", "longrange",
 ]
 _TOP_LEVEL_JSX = ["tweaks-panel", "data", "app"]
 
@@ -1439,6 +1448,7 @@ window.__switchYear = function(year) {
         ("components/costing.jsx", "costing"),
         ("components/cashflow.jsx", "cashflow"),
         ("components/iteminsight.jsx", "iteminsight"),
+        ("components/longrange.jsx", "longrange"),
         ("app.jsx", "app"),
     ]
     for src_path, key in refs:

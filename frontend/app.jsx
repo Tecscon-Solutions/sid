@@ -77,7 +77,7 @@ function App() {
   // merge result forces the Upload page (that's where their panels live);
   // otherwise restore the page the user was on (sessionStorage survives the
   // reload); fall back to Line Items.
-  const PAGE_IDS = ['lineitems', 'costing', 'cashflow', 'predictions', 'actionflow', 'accuracy', 'explorer', 'newitems', 'dormant', 'movers', 'iteminsight', 'forecasts', 'upload'];
+  const PAGE_IDS = ['lineitems', 'costing', 'cashflow', 'predictions', 'actionflow', 'accuracy', 'explorer', 'newitems', 'dormant', 'movers', 'iteminsight', 'forecasts', 'longrange', 'upload'];
   const [page, setPage] = useState(() => {
     if (typeof window === 'undefined') return 'lineitems';
     if (window.__UPLOAD_JOB || window.__MERGE_RESULT) return 'upload';
@@ -175,6 +175,7 @@ function App() {
     : page === 'cashflow' ? 'Cash Flow'
     : page === 'iteminsight' ? 'Item Insights'
     : page === 'forecasts' ? 'Item Forecasts'
+    : page === 'longrange' ? 'Quarterly / Half-Yearly / Yearly Forecast'
     : 'Upload Data';
 
   return (
@@ -282,6 +283,7 @@ function App() {
           {page === 'cashflow' && <CashFlowPage allData={data || []} />}
           {page === 'iteminsight' && <ItemInsightPage allData={data} />}
           {page === 'forecasts' && <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: '14px 20px 0' }}><ItemForecastsGrid allData={data || []} /></div>}
+          {page === 'longrange' && <LongRangePage allData={data || []} />}
           {page === 'upload' && <div style={{ padding: 24, overflow: 'auto' }}><UploadDataPage onOpenDataSource={() => setDsOpen(true)} /></div>}
         </main>
       </div>
