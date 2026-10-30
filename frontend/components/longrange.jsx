@@ -76,6 +76,63 @@ function lrSampleRows(allData) {
 // Rows kept for the session, so coming back to the page is instant.
 const lrCache = { state: null };
 
+/* Every row matching `filter`, the first page with a row count and the rest in parallel. */
+async function lrFetchAll(client, filter) {
+  const PAGE = 1000;
+  const page = (from, withCount) => filter(client.from('forecast_predictions').select('*', withCount ? { count: 'exact' } : undefined))
+    .order('year_month').order('item_code').order('id').range(from, from + PAGE - 1);
+  const first = await page(0, true);
+  if (first.error) return { error: first.error };
+  const rest = [];
+  for (let from = PAGE; from < (first.count || 0); from += PAGE) rest.push(page(from, false));
+  const pages = await Promise.all(rest);
+  const bad = pages.find(r => r.error);
+  if (bad) return { error: bad.error };
+  return { rows: [...(first.data || []), ...pages.flatMap(r => r.data || [])] };
+}
+
+/* The current forecast (is_latest rows) plus the periods that are already
+   over. A finished period is never in the latest upload, because each upload
+   skips the period it falls in, so its actuals only exist on older versions.
+   For those the page shows the last forecast made before the period began,
+   next to the actual. */
+async function lrLoad(client) {
+  const grains = LR_GRAINS.map(g => g.id);
+  const latest = await lrFetchAll(client, q => q.in('grain', grains).eq('is_latest', true));
+  if (latest.error) {
+    // 42703 = the grain / is_latest columns are not in the database yet
+    return latest.error.code === '42703' ? { status: 'notlive', rows: [] } : { status: 'error', rows: [], message: latest.error.message };
+  }
+  const done = await lrFetchAll(client, q => q.in('grain', grains).not('actual_closing_balance', 'is', null));
+  if (done.error) return { status: 'error', rows: [], message: done.error.message };
+
+  // One row per grain / period / item. Latest: the newest upload, in case two are ever flagged.
+  const newer = (a, b) => (a.upload_year_month || '') > (b.upload_year_month || '') || ((a.upload_year_month || '') === (b.upload_year_month || '') && (a.run_id || 0) > (b.run_id || 0));
+  const pick = {};
+  latest.rows.forEach(r => { const k = r.grain + '|' + r.year_month + '|' + r.item_code; if (!pick[k] || newer(r, pick[k])) pick[k] = r; });
+  const latestPeriods = new Set(latest.rows.map(r => r.grain + '|' + r.year_month));
+  // Finished periods: the newest upload made before the period started (else the oldest one).
+  const before = {};
+  done.rows.forEach(r => {
+    const pk = r.grain + '|' + r.year_month;
+    if (latestPeriods.has(pk)) return;
+    const start = String(r.year_month).slice(0, 7), k = pk + '|' + r.item_code, cur = before[k];
+    const ok = (r.upload_year_month || '') < start;
+    if (!cur) { before[k] = { r, ok }; return; }
+    if (ok && (!cur.ok || newer(r, cur.r))) before[k] = { r, ok };
+    else if (!ok && !cur.ok && newer(cur.r, r)) before[k] = { r, ok };
+  });
+  // Keep the most recent finished periods only: 4 quarters, 2 halves, 1 year.
+  const keep = {};
+  LR_GRAINS.forEach(g => {
+    const ps = [...new Set(Object.values(before).filter(x => x.r.grain === g.id).map(x => x.r.year_month))].sort();
+    ps.slice(-g.n).forEach(p => (keep[g.id + '|' + p] = true));
+  });
+  const finished = Object.values(before).filter(x => keep[x.r.grain + '|' + x.r.year_month]).map(x => ({ ...x.r, _finished: true }));
+  const rows = [...Object.values(pick), ...finished];
+  return { status: rows.length ? 'ready' : 'empty', rows };
+}
+
 function LongRangePage({ allData }) {
   const fmtNum = v => (v == null ? '—' : (Math.round(v) || 0).toLocaleString('en-US'));
   const [state, setState] = React.useState(() => lrCache.state || { status: 'loading', rows: [] }); // loading | ready | notlive | empty | error
@@ -86,40 +143,22 @@ function LongRangePage({ allData }) {
   const [q, setQ] = React.useState('');
   const [sortBy, setSortBy] = React.useState(null); // period label, or null = item name
   const [itemSel, setItemSel] = React.useState(null);
+  const [reload, setReload] = React.useState(0);
 
   const client = React.useMemo(() => getSupabaseClient(), []);
+  const refresh = () => { lrCache.state = null; setSample(false); setState({ status: 'loading', rows: [] }); setReload(n => n + 1); };
 
   React.useEffect(() => {
     if (lrCache.state) return; // already loaded this session
     if (!client) { setState({ status: 'error', rows: [], message: 'Supabase is not configured.' }); return; }
     let cancelled = false;
     (async () => {
-      const PAGE = 1000;
-      const page = (from, withCount) => client.from('forecast_predictions').select('*', withCount ? { count: 'exact' } : undefined)
-        .in('grain', LR_GRAINS.map(g => g.id)).eq('is_latest', true)
-        .order('year_month').order('item_code').range(from, from + PAGE - 1);
-      // First page tells us the row count, the rest are fetched together.
-      const first = await page(0, true);
-      let next = { status: 'ready', rows: [] };
-      if (first.error) {
-        // 42703 = the grain / is_latest columns are not in the database yet
-        next = first.error.code === '42703' ? { status: 'notlive', rows: [] } : { status: 'error', rows: [], message: first.error.message };
-      } else {
-        const rest = [];
-        for (let from = PAGE; from < (first.count || 0); from += PAGE) rest.push(page(from, false));
-        const pages = await Promise.all(rest);
-        const bad = pages.find(r => r.error);
-        if (bad) next = { status: 'error', rows: [], message: bad.error.message };
-        else {
-          next.rows = [...(first.data || []), ...pages.flatMap(r => r.data || [])];
-          if (!next.rows.length) next.status = 'empty';
-        }
-      }
-      if (next.status === 'ready' || next.status === 'empty' || next.status === 'notlive') lrCache.state = next;
+      const next = await lrLoad(client);
+      if (next.status === 'ready') lrCache.state = next; // an empty or not-live answer is asked again next visit
       if (!cancelled) setState(next);
     })();
     return () => { cancelled = true; };
-  }, [client]);
+  }, [client, reload]);
 
   const rows = React.useMemo(() => (sample ? lrSampleRows(allData) : state.rows), [sample, state.rows, allData]);
   const grainsPresent = React.useMemo(() => LR_GRAINS.filter(g => rows.some(r => r.grain === g.id)), [rows]);
@@ -130,7 +169,7 @@ function LongRangePage({ allData }) {
   const view = React.useMemo(() => {
     const gr = rows.filter(r => r.grain === grain);
     const periods = [...new Set(gr.map(r => r.year_month))].sort();
-    const uploads = [...new Set(gr.map(r => r.upload_year_month).filter(Boolean))].sort();
+    const uploads = [...new Set(gr.filter(r => !r._finished).map(r => r.upload_year_month).filter(Boolean))].sort();
     const items = {};
     gr.forEach(r => {
       const it = items[r.item_code] || (items[r.item_code] = { code: r.item_code, desc: r.item_description || r.item_code, isHV: !!r.is_high_value, by: {} });
@@ -141,7 +180,7 @@ function LongRangePage({ allData }) {
       const withActual = ps.filter(r => r.actual_closing_balance != null);
       const sum = (a, k) => a.reduce((s, r) => s + (r[k] == null ? 0 : +r[k]), 0);
       return {
-        period: p, items: ps.length, pred: sum(ps, 'pred_closing_balance'),
+        period: p, finished: ps.some(r => r._finished), from: ps[0] && ps[0].upload_year_month, items: ps.length, pred: sum(ps, 'pred_closing_balance'),
         costAvg: sum(ps, 'pred_cost_avg'), costMin: sum(ps, 'pred_cost_min'), costMax: sum(ps, 'pred_cost_max'),
         actualCount: withActual.length, predOfActual: sum(withActual, 'pred_closing_balance'), actual: sum(withActual, 'actual_closing_balance'),
       };
@@ -173,6 +212,11 @@ function LongRangePage({ allData }) {
     return (
       <div style={{ padding: '56px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, textAlign: 'center' }}>
         <div style={{ maxWidth: 520, color: 'var(--text-2)', fontSize: 13.5, lineHeight: 1.6 }}>{msg}</div>
+        {client && (
+          <button onClick={refresh} style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid var(--border)', background: '#fff', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font)' }}>
+            Try again
+          </button>
+        )}
         {(allData || []).length > 0 && (
           <button onClick={() => setSample(true)} style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid var(--accent)', background: '#fff', color: 'var(--accent)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font)' }}>
             Preview the layout with sample numbers
@@ -191,13 +235,19 @@ function LongRangePage({ allData }) {
   const th = align => ({ padding: '8px 10px', textAlign: align || 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2, background: '#FAFBFC' });
   const td = align => ({ padding: '7px 10px', textAlign: align || 'left', fontSize: 11, borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' });
   const tag = (text, color, bg) => <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color, background: bg, padding: '2px 6px', borderRadius: 5 }}>{text}</span>;
-  const pctDiff = (pred, act) => (act ? Math.round(((pred - act) / act) * 100) : null);
+  const pctDiff = (pred, act) => (act ? Math.round(((pred - act) / act) * 100) : pred ? 100 : 0);
   const g = LR_GRAINS.find(x => x.id === grain);
 
   const exportCsv = () => {
-    const head = ['Item Code', 'Item', 'High Value', ...view.periods.flatMap(p => { const n = lrPeriodLabel(p, grain).name; return [`${n} predicted`, `${n} actual`]; })];
-    const key = measure === 'cost' ? 'pred_cost_avg' : 'pred_closing_balance';
-    const body = list.map(x => [x.code, x.desc, x.isHV ? 'Yes' : 'No', ...view.periods.flatMap(p => { const r = x.by[p]; return [r && r[key] != null ? Math.round(r[key]) : '', r && r.actual_closing_balance != null ? Math.round(r.actual_closing_balance) : '']; })]);
+    const cost = measure === 'cost', key = cost ? 'pred_cost_avg' : 'pred_closing_balance';
+    const head = ['Item Code', 'Item', 'High Value', ...view.periods.flatMap(p => {
+      const n = lrPeriodLabel(p, grain).name;
+      return cost ? [`${n} predicted cost (${CURRENCY}, avg rate)`] : [`${n} predicted balance`, `${n} actual balance`];
+    })];
+    const body = list.map(x => [x.code, x.desc, x.isHV ? 'Yes' : 'No', ...view.periods.flatMap(p => {
+      const r = x.by[p], v = r && r[key] != null ? Math.round(r[key]) : '';
+      return cost ? [v] : [v, r && r.actual_closing_balance != null ? Math.round(r.actual_closing_balance) : ''];
+    })]);
     downloadCsv([head, ...body], `${grain}_forecast_from_${view.upload || 'latest'}${measure === 'cost' ? '_cost' : ''}.csv`);
   };
 
@@ -217,7 +267,7 @@ function LongRangePage({ allData }) {
           ))}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
-          From the <b style={{ color: 'var(--text-2)' }}>{lrUploadLabel(view.upload)}</b> upload · next {view.periods.length} {g.label.toLowerCase()} period{view.periods.length === 1 ? '' : 's'}, average closing balance per period
+          From the <b style={{ color: 'var(--text-2)' }}>{lrUploadLabel(view.upload)}</b> upload · {(() => { const f = view.totals.filter(t => t.finished).length, n = view.periods.length - f; return `${f ? `${f} finished and ` : ''}next ${n} ${g.label.toLowerCase()} period${n === 1 ? '' : 's'}`; })()}, average closing balance per period
         </div>
       </div>
 
@@ -230,14 +280,14 @@ function LongRangePage({ allData }) {
             <div key={t.period} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px', minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{lab.name}</span>
-                {done ? tag('Actuals in', '#047857', '#ECFDF5') : tag('Forecast only', '#6B7280', '#F3F4F6')}
+                {t.finished ? tag('Finished', '#047857', '#ECFDF5') : done ? tag('Actuals in', '#047857', '#ECFDF5') : tag('Forecast only', '#6B7280', '#F3F4F6')}
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 1 }}>{lab.span}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 1 }}>{lab.span}{t.finished && t.from ? ` · forecast from ${lrUploadLabel(t.from)}` : ''}</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--accent)', fontFamily: 'var(--mono)', marginTop: 6 }}>
                 {measure === 'cost' ? fmtNum(t.costAvg) : fmtNum(t.pred)}
               </div>
               <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 1 }}>
-                {measure === 'cost' ? `HV cost, range ${fmtNum(t.costMin)} – ${fmtNum(t.costMax)}` : `predicted units across ${fmtNum(t.items)} items`}
+                {measure === 'cost' ? `HV cost in ${CURRENCY}, range ${fmtNum(t.costMin)} to ${fmtNum(t.costMax)}` : `predicted units across ${fmtNum(t.items)} items`}
               </div>
               {done && (
                 <div style={{ fontSize: 10.5, marginTop: 4, color: 'var(--text-2)' }}>
@@ -255,11 +305,12 @@ function LongRangePage({ allData }) {
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Show</span>
           <button onClick={() => setMeasure('units')} style={pill(measure === 'units')}>Units</button>
-          <button onClick={() => setMeasure('cost')} style={pill(measure === 'cost')} title="Predicted cost at the average rate, High-Value items only">Cost (HV)</button>
+          <button onClick={() => setMeasure('cost')} style={pill(measure === 'cost')} title={`Predicted cost in ${CURRENCY} at the average rate, High-Value items only`}>Cost (HV, {CURRENCY})</button>
         </div>
         <button onClick={() => setHvOnly(v => !v)} style={pill(hvOnly || measure === 'cost')} disabled={measure === 'cost'}>★ HV only</button>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
           <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{list.length.toLocaleString('en-US')} item{list.length === 1 ? '' : 's'}</span>
+          {!sample && <button onClick={refresh} title="Read the forecasts from the database again" style={pill(false)}>Refresh</button>}
           <button onClick={exportCsv} disabled={!list.length} style={{ ...pill(false), color: 'var(--accent)', borderColor: 'var(--accent)' }}>Download CSV</button>
         </div>
       </div>
@@ -280,7 +331,7 @@ function LongRangePage({ allData }) {
             </tr>
           </thead>
           <tbody>
-            {list.slice(0, 300).map(x => (
+            {list.slice(0, 1000).map(x => (
               <tr key={x.code} onClick={() => setItemSel(x.code)} style={{ cursor: 'pointer' }}
                 onMouseEnter={e => (e.currentTarget.style.background = '#FAFBFC')} onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                 <td style={{ ...td(), whiteSpace: 'normal' }}>
@@ -302,7 +353,7 @@ function LongRangePage({ allData }) {
               </tr>
             ))}
             {list.length === 0 && <tr><td colSpan={view.periods.length + 1} style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)' }}>No items match the filters</td></tr>}
-            {list.length > 300 && <tr><td colSpan={view.periods.length + 1} style={{ padding: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 11 }}>Showing 300 of {list.length.toLocaleString('en-US')}. Search to narrow, or download the CSV for all.</td></tr>}
+            {list.length > 1000 && <tr><td colSpan={view.periods.length + 1} style={{ padding: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 11 }}>Showing 1,000 of {list.length.toLocaleString('en-US')}. Search to narrow, or download the CSV for all.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -339,12 +390,17 @@ function LongRangeItemModal({ code, grain, view, client, sample, onClose }) {
     }
     (async () => {
       const { data, error } = await client.from('forecast_predictions')
-        .select('year_month, upload_year_month, pred_closing_balance, actual_closing_balance')
-        .eq('grain', grain).eq('item_code', code).order('upload_year_month');
+        .select('year_month, upload_year_month, run_id, pred_closing_balance, actual_closing_balance')
+        .eq('grain', grain).eq('item_code', code).order('upload_year_month').order('run_id');
       if (cancelled) return;
       if (error) { setHist({}); return; }
       const h = {};
-      (data || []).forEach(r => { (h[r.year_month] || (h[r.year_month] = [])).push({ upload: r.upload_year_month, pred: r.pred_closing_balance, actual: r.actual_closing_balance }); });
+      (data || []).forEach(r => {
+        const pts = h[r.year_month] || (h[r.year_month] = []);
+        const pt = { upload: r.upload_year_month, pred: r.pred_closing_balance, actual: r.actual_closing_balance };
+        if (pts.length && pts[pts.length - 1].upload === pt.upload) pts[pts.length - 1] = pt; // a re-run of the same upload replaces it
+        else pts.push(pt);
+      });
       setHist(h);
     })();
     return () => { cancelled = true; };
@@ -397,7 +453,7 @@ function LongRangeItemModal({ code, grain, view, client, sample, onClose }) {
               );
             })}
           </svg>
-          <div style={{ fontSize: 10.5, color: 'var(--text-3)', margin: '4px 0 16px' }}>Bars: predicted average closing balance. Green line: actual, once every month of the period is in.</div>
+          <div style={{ fontSize: 10.5, color: 'var(--text-3)', margin: '4px 0 16px' }}>Bars: predicted average closing balance, in units. Green line: actual, once every month of the period is in.</div>
 
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>How the forecast changed</div>
           <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>Each dot is one monthly upload that forecast the period, oldest on the left{sample ? ' (sample)' : ''}.</div>

@@ -719,7 +719,9 @@ def _fetch_supabase_predictions(url: str, key: str, run_id: int) -> list[dict]:
             client.table("forecast_predictions")
             .select("*")
             .eq("run_id", run_id)
+            .not_.like("year_month", "*_to_*")  # Q/H/Y range rows, kept out at the source
             .order("year_month")
+            .order("id")
             .range(offset, offset + PAGE - 1)
             .execute()
         )
@@ -863,7 +865,9 @@ def _fetch_all_supabase_predictions(url: str, key: str) -> list[dict]:
         resp = (
             client.table("forecast_predictions")
             .select("*")
+            .not_.like("year_month", "*_to_*")  # Q/H/Y range rows, kept out at the source
             .order("year_month")
+            .order("id")
             .range(offset, offset + PAGE - 1)
             .execute()
         )
@@ -932,7 +936,9 @@ def _fetch_supabase_predictions_by_year(url: str, key: str, year: int) -> list[d
             .select("*")
             .gte("year_month", lo)
             .lte("year_month", hi)
+            .not_.like("year_month", "*_to_*")  # Q/H/Y range rows, kept out at the source
             .order("year_month")
+            .order("id")
             .range(offset, offset + PAGE - 1)
             .execute()
         )

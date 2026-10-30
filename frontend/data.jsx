@@ -19,14 +19,14 @@ const { useState, useEffect, useMemo } = React;
    auth storage key, and its requests queue behind the first one's (the Q/H/Y
    page waited about 25 s behind the monthly background load). */
 function getSupabaseClient() {
-  if (window.__SB_CLIENT !== undefined) return window.__SB_CLIENT;
+  if (window.__SB_CLIENT) return window.__SB_CLIENT;
   const url = window.__SUPABASE_URL, key = window.__SUPABASE_KEY;
   let c = null;
   if (url && key && window.supabase) {
     try { c = window.supabase.createClient(url, key); }
     catch (e) { console.error('supabase client init failed', e); }
   }
-  window.__SB_CLIENT = c;
+  if (c) window.__SB_CLIENT = c;
   return c;
 }
 
@@ -349,7 +349,9 @@ function useSupabaseData() {
         .select('*')
         .gte('year_month', lo)
         .lte('year_month', hi)
+        .not('year_month', 'like', '*_to_*') // Q/H/Y range rows, kept out at the source
         .order('year_month')
+        .order('id')
         .range(offset, offset + PAGE - 1);
       if (err) throw err;
       if (!data || !data.length) break;
@@ -371,7 +373,9 @@ function useSupabaseData() {
       const { data, error: err } = await client
         .from('forecast_predictions')
         .select('*')
+        .not('year_month', 'like', '*_to_*') // Q/H/Y range rows, kept out at the source
         .order('year_month')
+        .order('id')
         .range(offset, offset + PAGE - 1);
       if (err) throw err;
       if (!data || !data.length) break;
