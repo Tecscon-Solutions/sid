@@ -73,9 +73,12 @@ function lrSampleRows(allData) {
   return rows;
 }
 
+// Rows kept for the session, so coming back to the page is instant.
+const lrCache = { state: null };
+
 function LongRangePage({ allData }) {
   const fmtNum = v => (v == null ? '—' : (Math.round(v) || 0).toLocaleString('en-US'));
-  const [state, setState] = React.useState({ status: 'loading', rows: [] }); // loading | ready | notlive | empty | error
+  const [state, setState] = React.useState(() => lrCache.state || { status: 'loading', rows: [] }); // loading | ready | notlive | empty | error
   const [sample, setSample] = React.useState(false);
   const [grain, setGrain] = React.useState('quarterly');
   const [measure, setMeasure] = React.useState('units'); // units | cost
@@ -84,32 +87,36 @@ function LongRangePage({ allData }) {
   const [sortBy, setSortBy] = React.useState(null); // period label, or null = item name
   const [itemSel, setItemSel] = React.useState(null);
 
-  const client = React.useMemo(() => {
-    const url = window.__SUPABASE_URL, key = window.__SUPABASE_KEY;
-    if (!url || !key || !window.supabase) return null;
-    try { return window.supabase.createClient(url, key); } catch (e) { return null; }
-  }, []);
+  const client = React.useMemo(() => getSupabaseClient(), []);
 
   React.useEffect(() => {
+    if (lrCache.state) return; // already loaded this session
     if (!client) { setState({ status: 'error', rows: [], message: 'Supabase is not configured.' }); return; }
     let cancelled = false;
     (async () => {
-      const all = [];
       const PAGE = 1000;
-      for (let offset = 0; ; offset += PAGE) {
-        const { data, error } = await client.from('forecast_predictions').select('*')
-          .in('grain', LR_GRAINS.map(g => g.id)).eq('is_latest', true)
-          .order('year_month').range(offset, offset + PAGE - 1);
-        if (cancelled) return;
-        if (error) {
-          // 42703 = the grain / is_latest columns are not in the database yet
-          setState(error.code === '42703' ? { status: 'notlive', rows: [] } : { status: 'error', rows: [], message: error.message });
-          return;
+      const page = (from, withCount) => client.from('forecast_predictions').select('*', withCount ? { count: 'exact' } : undefined)
+        .in('grain', LR_GRAINS.map(g => g.id)).eq('is_latest', true)
+        .order('year_month').order('item_code').range(from, from + PAGE - 1);
+      // First page tells us the row count, the rest are fetched together.
+      const first = await page(0, true);
+      let next = { status: 'ready', rows: [] };
+      if (first.error) {
+        // 42703 = the grain / is_latest columns are not in the database yet
+        next = first.error.code === '42703' ? { status: 'notlive', rows: [] } : { status: 'error', rows: [], message: first.error.message };
+      } else {
+        const rest = [];
+        for (let from = PAGE; from < (first.count || 0); from += PAGE) rest.push(page(from, false));
+        const pages = await Promise.all(rest);
+        const bad = pages.find(r => r.error);
+        if (bad) next = { status: 'error', rows: [], message: bad.error.message };
+        else {
+          next.rows = [...(first.data || []), ...pages.flatMap(r => r.data || [])];
+          if (!next.rows.length) next.status = 'empty';
         }
-        all.push(...(data || []));
-        if (!data || data.length < PAGE) break;
       }
-      setState({ status: all.length ? 'ready' : 'empty', rows: all });
+      if (next.status === 'ready' || next.status === 'empty' || next.status === 'notlive') lrCache.state = next;
+      if (!cancelled) setState(next);
     })();
     return () => { cancelled = true; };
   }, [client]);
@@ -222,7 +229,7 @@ function LongRangePage({ allData }) {
           return (
             <div key={t.period} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px', minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{lab.name}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{lab.name}</span>
                 {done ? tag('Actuals in', '#047857', '#ECFDF5') : tag('Forecast only', '#6B7280', '#F3F4F6')}
               </div>
               <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 1 }}>{lab.span}</div>

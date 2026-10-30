@@ -15,6 +15,21 @@
 // in app.jsx as well would be a "Identifier already declared" SyntaxError.
 const { useState, useEffect, useMemo } = React;
 
+/* One supabase-js client for the whole page. A second client shares the same
+   auth storage key, and its requests queue behind the first one's (the Q/H/Y
+   page waited about 25 s behind the monthly background load). */
+function getSupabaseClient() {
+  if (window.__SB_CLIENT !== undefined) return window.__SB_CLIENT;
+  const url = window.__SUPABASE_URL, key = window.__SUPABASE_KEY;
+  let c = null;
+  if (url && key && window.supabase) {
+    try { c = window.supabase.createClient(url, key); }
+    catch (e) { console.error('supabase client init failed', e); }
+  }
+  window.__SB_CLIENT = c;
+  return c;
+}
+
 /* Monthly rows only. Since Oct 2026 forecast_predictions also holds quarterly /
    half-yearly / yearly rows (grain column, labels like '2027-01_to_2027-03').
    They would leak into every monthly view, the year-range query included,
@@ -315,13 +330,7 @@ function useSupabaseData() {
 
   // Lazy-create the supabase-js client. Returns null if creds aren't set
   // (we'll just keep the server-rendered data in that case).
-  const client = React.useMemo(() => {
-    const url = window.__SUPABASE_URL;
-    const key = window.__SUPABASE_KEY;
-    if (!url || !key || !window.supabase) return null;
-    try { return window.supabase.createClient(url, key); }
-    catch (e) { console.error('supabase client init failed', e); return null; }
-  }, []);
+  const client = React.useMemo(() => getSupabaseClient(), []);
 
   // Paginated fetch for one year's predictions — gathers every row from
   // every run that touches the year. Backtest + Future runs union into a
