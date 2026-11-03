@@ -798,6 +798,15 @@ function AccuracyTab({ periodGroups, allData, metric = 'mape' }) {
   const pickMonth = p => { setOutMonth(p); if (outRef.current) outRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gridAutoRows: 'min-content', gap: 12 }}>
+      {/* Outliers: a few items with a tiny actual balance can make a month's
+          average APE look far worse than the forecast really was. */}
+      <div ref={outRef} style={{ gridColumn: 'span 8', scrollMarginTop: 12 }}>
+        <Card title="APE Outliers · which items pull a month's error up"
+          info={`A month's APE is the plain average of its item errors, so a single item whose actual balance fell to a handful of units can read as 1,000%+ and outweigh dozens of accurate forecasts. Set a target average APE: the items with the largest errors are set aside one at a time until the rest meet the target, and those items are listed here with how much of the month's total error each one carries. The median shows the typical item's error, which outliers cannot move.`}>
+          <ApeOutliers allData={allData} month={outMonth} onMonth={setOutMonth} />
+        </Card>
+      </div>
+
       {/* Bucket editor */}
       <div style={{ gridColumn: 'span 8', background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px' }}>
         <MapeBucketEditor thresholds={mapeThresholds} onChange={setMapeThresholds} />
@@ -831,15 +840,6 @@ function AccuracyTab({ periodGroups, allData, metric = 'mape' }) {
           : `Each month's average APE — the absolute % error of the individual item forecasts that month (all items and HV) — alongside the predicted / deliver / return counts. Switch back to MAPE from the top header for the model's reported summary.`}>
         <ModelAccuracyTable periodGroups={periodGroups} modelLabel={modelLabel} allData={allData} metric={metric} selected={outMonth} onPick={pickMonth} />
       </Card>
-
-      {/* Outliers: a few items with a tiny actual balance can make a month's
-          average APE look far worse than the forecast really was. */}
-      <div ref={outRef} style={{ gridColumn: 'span 8', scrollMarginTop: 12 }}>
-        <Card title="APE Outliers · which items pull a month's error up"
-          info={`A month's APE is the plain average of its item errors, so a single item whose actual balance fell to a handful of units can read as 1,000%+ and outweigh dozens of accurate forecasts. Set a target average APE: the items with the largest errors are set aside one at a time until the rest meet the target, and those items are listed here with how much of the month's total error each one carries. The median shows the typical item's error, which outliers cannot move.`}>
-          <ApeOutliers allData={allData} month={outMonth} onMonth={setOutMonth} />
-        </Card>
-      </div>
     </div>
   );
 }

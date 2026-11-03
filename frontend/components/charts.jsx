@@ -331,7 +331,7 @@ function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape'
         {isApe
           ? 'Average APE (absolute % error) of each month’s individual item forecasts — all items and HV. Lower = better.'
           : 'Model accuracy summary from the MAPE_Summary sheet. Lower MAPE = better accuracy.'}
-        {onPick && ' Click a month to see its outliers below.'}
+        {onPick && ' Click a month to see its outliers at the top.'}
       </div>
       {/* Both axes scroll. Height is matched to the Portfolio chart next to
           us (~340px usable: SVG padT 14 + cH 280 + padB 44 + chrome). */}
