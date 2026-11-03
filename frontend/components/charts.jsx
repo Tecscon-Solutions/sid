@@ -383,30 +383,72 @@ function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape'
    A month's APE is the plain average of its item errors, so one item whose
    actual balance fell to 2 (a 30-unit miss = 1500%) can outweigh 70 good
    ones. Pick a target average; the items with the largest errors are left out
-   one by one until the rest meet it, and are listed as the outliers. */
+   one by one until the rest meet it, and are listed as the outliers. The
+   "Across all months" view runs the same rule on every month and lists the
+   items that keep coming up, with a search for any one item. */
+function apeOutliersOf(rows, target) {
+  const s = rows.slice().sort((a, b) => b.ape - a.ape);
+  const n = s.length;
+  if (!n) return null;
+  const total = s.reduce((t, d) => t + d.ape, 0);
+  let sum = total, k = 0;
+  while (k < n - 1 && sum / (n - k) > target) { sum -= s[k].ape; k++; }
+  const asc = s.map(d => d.ape).reverse();
+  const median = n % 2 ? asc[(n - 1) / 2] : (asc[n / 2 - 1] + asc[n / 2]) / 2;
+  return { n, avg: total / n, after: sum / (n - k), k, out: s.slice(0, k), share: total ? (total - sum) / total * 100 : 0, median, total };
+}
+
 function ApeOutliers({ allData, month, onMonth }) {
   const [seg, setSeg] = React.useState('hv'); // hv | all
   const [target, setTarget] = React.useState(15);
   const [targetText, setTargetText] = React.useState('15');
+  const [view, setView] = React.useState('month'); // month | months
+  const [q, setQ] = React.useState('');
+  React.useEffect(() => { if (month) setView('month'); }, [month]); // a month clicked in the APE Summary table or a month chip
+
+  const rows = React.useMemo(() => (allData || []).filter(d => d.ape != null && (seg === 'all' || d.isHV)), [allData, seg]);
   const months = React.useMemo(() => [...new Set((allData || []).filter(d => d.ape != null).map(d => d.period))].sort().reverse(), [allData]);
   const m = months.includes(month) ? month : months[0];
 
-  const res = React.useMemo(() => {
-    const rows = (allData || []).filter(d => d.period === m && d.ape != null && (seg === 'all' || d.isHV))
-      .slice().sort((a, b) => b.ape - a.ape);
-    const n = rows.length;
-    if (!n) return null;
-    const total = rows.reduce((s, d) => s + d.ape, 0);
-    let sum = total, k = 0;
-    while (k < n - 1 && sum / (n - k) > target) { sum -= rows[k].ape; k++; }
-    const sorted = rows.map(d => d.ape).sort((a, b) => a - b);
-    const median = n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
-    return { n, avg: total / n, after: sum / (n - k), k, out: rows.slice(0, k), share: total ? (total - sum) / total * 100 : 0, median, total };
-  }, [allData, m, seg, target]);
+  // The outlier rule run on every month, then gathered per item.
+  const byMonth = React.useMemo(() => {
+    const g = {};
+    rows.forEach(d => { (g[d.period] || (g[d.period] = [])).push(d); });
+    const out = {};
+    Object.keys(g).forEach(p => { out[p] = apeOutliersOf(g[p], target); });
+    return out;
+  }, [rows, target]);
+  const res = byMonth[m] || null;
+
+  const items = React.useMemo(() => {
+    const it = {};
+    rows.forEach(d => {
+      const x = it[d.itemCode] || (it[d.itemCode] = { code: d.itemCode, desc: d.description || d.itemCode, isHV: d.isHV, checked: 0, hits: [] });
+      x.checked++;
+    });
+    Object.entries(byMonth).forEach(([p, r]) => (r ? r.out : []).forEach(d => it[d.itemCode].hits.push({ p, ape: d.ape })));
+    return Object.values(it).map(x => {
+      x.hits.sort((a, b) => (a.p < b.p ? 1 : -1));
+      x.avg = x.hits.length ? x.hits.reduce((s, h) => s + h.ape, 0) / x.hits.length : null;
+      x.worst = x.hits.length ? Math.max(...x.hits.map(h => h.ape)) : null;
+      return x;
+    });
+  }, [rows, byMonth]);
+  const itemByCode = React.useMemo(() => Object.fromEntries(items.map(x => [x.code, x])), [items]);
+  const across = React.useMemo(() => {
+    const s = q.trim().toLowerCase();
+    const a = s ? items.filter(x => (x.desc + ' ' + x.code).toLowerCase().includes(s)) : items.filter(x => x.hits.length);
+    return a.slice().sort((x, y) => y.hits.length - x.hits.length || (y.avg || 0) - (x.avg || 0) || (x.desc < y.desc ? -1 : 1));
+  }, [items, q]);
+  const repeat = items.filter(x => x.hits.length >= 2).length;
+  const ever = items.filter(x => x.hits.length).length;
+  const top = items.reduce((b, x) => (!b || x.hits.length > b.hits.length ? x : b), null);
 
   const fmtPct = v => (v == null ? '—' : (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1)) + '%');
   const fmtN = v => (v == null ? '—' : Math.round(v).toLocaleString('en-US'));
-  const monLabel = p => { const [y, mo] = String(p || '').split('-'); const ns = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return (ns[parseInt(mo)] || mo) + ' ' + y; };
+  const NS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monLabel = p => { const [y, mo] = String(p || '').split('-'); return (NS[parseInt(mo)] || mo) + ' ' + y; };
+  const monShort = p => { const [y, mo] = String(p || '').split('-'); return (NS[parseInt(mo)] || mo) + " '" + String(y).slice(2); };
   const col = v => (v > 100 ? '#DC2626' : v > 50 ? '#D97706' : '#059669');
   const pill = active => ({ padding: '4px 11px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)', border: '1px solid', borderColor: active ? 'var(--accent)' : 'var(--border)', background: active ? 'rgba(79,70,229,.06)' : '#fff', color: active ? 'var(--accent)' : 'var(--text-2)' });
   // A blank or 0 entry goes back to the last target instead of dropping almost every item.
@@ -416,50 +458,108 @@ function ApeOutliers({ allData, month, onMonth }) {
     <div style={{ flex: '1 1 0', minWidth: 150, background: '#FAFBFC', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
       <div style={label}>{title}</div>
       <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: color || 'var(--text)', marginTop: 4 }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{sub}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>
     </div>
   );
   const th = a => ({ padding: '7px 10px', textAlign: a || 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '2px solid var(--border)', background: '#FAFBFC', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1 });
   const td = a => ({ padding: '7px 10px', textAlign: a || 'left', fontSize: 11.5, borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' });
+  const itemCell = (code, desc, isHV) => (
+    <td style={{ ...td(), whiteSpace: 'normal', minWidth: 180 }}>
+      <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 12 }}>{isHV && <span style={{ color: 'var(--accent)' }}>★ </span>}{desc}</div>
+      <div style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>{code}</div>
+    </td>
+  );
+  const whyOf = d => {
+    const miss = d.predictedClosingBal != null && d.actualClosingBal != null ? Math.abs(d.predictedClosingBal - d.actualClosingBal) : null;
+    const act = d.actualClosingBal;
+    const why = act != null && act <= 20 ? `Actual only ${fmtN(act)}, so a ${fmtN(miss)}-unit miss reads as ${fmtPct(d.ape)}`
+      : d.prevClosingBal != null && act != null && act < d.prevClosingBal * 0.6 ? `Balance dropped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large return`
+      : d.prevClosingBal != null && act != null && act > d.prevClosingBal * 1.6 ? `Balance jumped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large delivery`
+      : `Missed by ${fmtN(miss)} units`;
+    return { miss, why };
+  };
+  const segName = seg === 'hv' ? 'high-value' : '';
+  const nMonths = Object.keys(byMonth).length;
+  const r0 = v => (v == null ? '' : Math.round(v));
+  const exportCsv = () => {
+    if (view === 'month') {
+      if (!res) return;
+      const head = ['Month', 'Item Code', 'Item', 'High Value', 'Prev Bal', 'Pred. Bal', 'Actual Bal', 'Missed By', 'APE %', 'Share of Month Error %', 'Outlier Months', 'Why'];
+      const body = res.out.map(d => {
+        const w = whyOf(d), x = itemByCode[d.itemCode];
+        return [m, d.itemCode, d.description, d.isHV ? 'Yes' : 'No', r0(d.prevClosingBal), r0(d.predictedClosingBal), r0(d.actualClosingBal), r0(w.miss),
+          d.ape.toFixed(1), (res.total ? d.ape / res.total * 100 : 0).toFixed(1), x ? `${x.hits.length} of ${x.checked}` : '', w.why];
+      });
+      const note = `Target APE ${target}%. ${monLabel(m)}, ${res.n} ${segName} items: average APE ${res.avg.toFixed(1)}%, without these ${res.k} outliers ${res.after.toFixed(1)}%, median ${res.median.toFixed(1)}%.`;
+      downloadCsv([[note], head, ...body], `ape_outliers_${m}_${seg}_target${target}.csv`);
+    } else {
+      const head = ['Item Code', 'Item', 'High Value', 'Months as Outlier', 'Months with Actuals', 'Outlier Months (APE %)', 'Avg APE When Outlier %', 'Worst APE %'];
+      const body = across.map(x => [x.code, x.desc, x.isHV ? 'Yes' : 'No', x.hits.length, x.checked, x.hits.map(h => `${h.p} (${Math.round(h.ape)}%)`).join('; '),
+        x.avg == null ? '' : x.avg.toFixed(1), x.worst == null ? '' : x.worst.toFixed(1)]);
+      const note = `Target APE ${target}%, ${segName || 'all'} items. Outliers found month by month with the same rule, ${nMonths} months with actuals.`;
+      downloadCsv([[note], head, ...body], `repeat_outliers_${seg}_target${target}${q.trim() ? '_search' : ''}.csv`);
+    }
+  };
 
   if (!months.length) return <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No month has actuals yet.</div>;
-  const segName = seg === 'hv' ? 'high-value' : '';
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={label}>Month</span>
-          <select value={m} onChange={e => onMonth(e.target.value)} style={{ padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border)', fontSize: 12, fontFamily: 'var(--font)', fontWeight: 600, color: 'var(--text)', background: '#fff' }}>
-            {months.map(p => <option key={p} value={p}>{monLabel(p)}</option>)}
-          </select>
+      {/* Target APE: the one number everything here depends on, so it gets the colour. */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(79,70,229,.07)', border: '1.5px solid var(--accent)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Target APE</span>
+          <div style={{ display: 'flex', alignItems: 'center', background: 'var(--accent)', borderRadius: 9, padding: '2px 10px 2px 4px', boxShadow: '0 2px 8px rgba(79,70,229,.25)' }}>
+            <input value={targetText} onChange={e => setTargetText(e.target.value.replace(/[^0-9]/g, ''))} onBlur={e => setT(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') setT(e.currentTarget.value); }} aria-label="Target APE"
+              style={{ width: 56, padding: '4px', border: 'none', outline: 'none', background: 'transparent', fontSize: 24, fontWeight: 800, fontFamily: 'var(--mono)', color: '#fff', textAlign: 'right' }} />
+            <span style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>%</span>
+          </div>
         </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[10, 15, 20, 30, 50].map(v => (
+            <button key={v} onClick={() => setT(v)} style={{ ...pill(target === v), fontSize: 12.5, padding: '5px 12px', background: target === v ? 'var(--accent)' : '#fff', color: target === v ? '#fff' : 'var(--text-2)' }}>{v}%</button>
+          ))}
+        </div>
+        <span style={{ fontSize: 11.5, color: 'var(--text-2)' }}>The items with the largest error are set aside until the rest average {target}% or less.</span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => setView('month')} style={pill(view === 'month')}>One month</button>
+          <button onClick={() => setView('months')} style={pill(view === 'months')}>Across all months</button>
+        </div>
+        {view === 'month' ? (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={label}>Month</span>
+            <select value={m} onChange={e => onMonth(e.target.value)} style={{ padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border)', fontSize: 12, fontFamily: 'var(--font)', fontWeight: 600, color: 'var(--text)', background: '#fff' }}>
+              {months.map(p => <option key={p} value={p}>{monLabel(p)}</option>)}
+            </select>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search an item code or name…"
+              style={{ width: 230, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', fontSize: 12, fontFamily: 'var(--font)', outline: 'none' }} />
+            {q && <button onClick={() => setQ('')} style={pill(false)}>Clear</button>}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span style={label}>Items</span>
           <button onClick={() => setSeg('hv')} style={pill(seg === 'hv')}>★ High-value</button>
           <button onClick={() => setSeg('all')} style={pill(seg === 'all')}>All</button>
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={label}>Target APE</span>
-          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--accent)', borderRadius: 7, overflow: 'hidden' }}>
-            <input value={targetText} onChange={e => setTargetText(e.target.value.replace(/[^0-9]/g, ''))} onBlur={e => setT(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') setT(e.currentTarget.value); }}
-              style={{ width: 44, padding: '4px 6px', border: 'none', outline: 'none', fontSize: 12, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--accent)', textAlign: 'right' }} />
-            <span style={{ padding: '0 8px 0 2px', fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>%</span>
-          </div>
-          {[10, 15, 20, 30, 50].map(v => <button key={v} onClick={() => setT(v)} style={pill(target === v)}>{v}%</button>)}
-        </div>
+        <button onClick={exportCsv} disabled={view === 'month' ? !res || !res.k : !across.length}
+          style={{ ...pill(false), marginLeft: 'auto', color: 'var(--accent)', borderColor: 'var(--accent)' }}>Download CSV</button>
       </div>
 
-      {!res ? <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No {segName} items with actuals in {monLabel(m)}.</div> : (
+      {view === 'month' && (!res ? <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No {segName} items with actuals in {monLabel(m)}.</div> : (
         <>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
             {stat('Average APE', fmtPct(res.avg), `${monLabel(m)}, ${res.n} ${segName} items`, col(res.avg))}
             {stat(`Without ${res.k} outlier${res.k === 1 ? '' : 's'}`, fmtPct(res.after), res.k ? `the other ${res.n - res.k} items` : `already at or under ${target}%`, col(res.after))}
-            {stat('Median APE', fmtPct(res.median), `half the items are within this`, col(res.median))}
+            {stat('Median APE', fmtPct(res.median), 'half the items are within this', col(res.median))}
             {stat('Outliers’ share of error', res.k ? fmtPct(res.share) : '—', res.k ? `${res.k} of ${res.n} items (${(res.k / res.n * 100).toFixed(0)}%)` : 'no outliers at this target', res.share > 50 ? '#DC2626' : 'var(--text)')}
           </div>
-
           {res.k > 0 && (
             <div className="h-scroller" style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 360, overflow: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
@@ -472,28 +572,21 @@ function ApeOutliers({ allData, month, onMonth }) {
                     <th style={th('right')}>Missed by</th>
                     <th style={th('right')}>APE</th>
                     <th style={th()}>Share of the month's error</th>
+                    <th style={th('right')}>Outlier in</th>
                     <th style={th()}>Why the % is high</th>
                   </tr>
                 </thead>
                 <tbody>
                   {res.out.map(d => {
-                    const miss = d.predictedClosingBal != null && d.actualClosingBal != null ? Math.abs(d.predictedClosingBal - d.actualClosingBal) : null;
+                    const w = whyOf(d), x = itemByCode[d.itemCode];
                     const sh = res.total ? d.ape / res.total * 100 : 0;
-                    const act = d.actualClosingBal;
-                    const why = act != null && act <= 20 ? `Actual only ${fmtN(act)}, so a ${fmtN(miss)}-unit miss reads as ${fmtPct(d.ape)}`
-                      : d.prevClosingBal != null && act != null && act < d.prevClosingBal * 0.6 ? `Balance dropped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large return`
-                      : d.prevClosingBal != null && act != null && act > d.prevClosingBal * 1.6 ? `Balance jumped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large delivery`
-                      : `Missed by ${fmtN(miss)} units`;
                     return (
                       <tr key={d.itemCode}>
-                        <td style={{ ...td(), whiteSpace: 'normal', minWidth: 180 }}>
-                          <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 12 }}>{d.isHV && <span style={{ color: 'var(--accent)' }}>★ </span>}{d.description}</div>
-                          <div style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>{d.itemCode}</div>
-                        </td>
+                        {itemCell(d.itemCode, d.description, d.isHV)}
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: 'var(--text-2)' }}>{fmtN(d.prevClosingBal)}</td>
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700 }}>{fmtN(d.predictedClosingBal)}</td>
-                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(act)}</td>
-                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(miss)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(d.actualClosingBal)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(w.miss)}</td>
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700, color: col(d.ape) }}>{fmtPct(d.ape)}</td>
                         <td style={td()}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -503,7 +596,13 @@ function ApeOutliers({ allData, month, onMonth }) {
                             <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-2)' }}>{sh.toFixed(0)}%</span>
                           </div>
                         </td>
-                        <td style={{ ...td(), whiteSpace: 'normal', color: 'var(--text-2)', minWidth: 200 }}>{why}</td>
+                        <td style={td('right')}>
+                          <button onClick={() => { setQ(d.itemCode); setView('months'); }} title="See every month this item was an outlier"
+                            style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600, color: x && x.hits.length > 1 ? '#DC2626' : 'var(--text-2)', textDecoration: 'underline dotted' }}>
+                            {x ? `${x.hits.length} of ${x.checked} months` : '—'}
+                          </button>
+                        </td>
+                        <td style={{ ...td(), whiteSpace: 'normal', color: 'var(--text-2)', minWidth: 200 }}>{w.why}</td>
                       </tr>
                     );
                   })}
@@ -511,6 +610,54 @@ function ApeOutliers({ allData, month, onMonth }) {
               </table>
             </div>
           )}
+        </>
+      ))}
+
+      {view === 'months' && (
+        <>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+            {stat('Months checked', nMonths, `every month with actuals`)}
+            {stat('Ever an outlier', ever, `of ${items.length} ${segName} items, in 1+ months`)}
+            {stat('Repeat outliers', repeat, 'outliers in 2 or more months', repeat ? '#DC2626' : 'var(--text)')}
+            {stat('Most often', top && top.hits.length ? `${top.hits.length} months` : '—', top && top.hits.length ? `${top.desc} (${top.code})` : 'no outliers at this target')}
+          </div>
+          <div className="h-scroller" style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 420, overflow: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <thead>
+                <tr>
+                  <th style={th()}>Item</th>
+                  <th style={th('right')}>Outlier in</th>
+                  <th style={th('right')}>Avg APE then</th>
+                  <th style={th('right')}>Worst</th>
+                  <th style={th()}>Outlier months (click one to open it)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {across.slice(0, 500).map(x => (
+                  <tr key={x.code}>
+                    {itemCell(x.code, x.desc, x.isHV)}
+                    <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700, color: x.hits.length > 1 ? '#DC2626' : x.hits.length ? 'var(--text)' : '#059669' }}>{x.hits.length} of {x.checked} months</td>
+                    <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: x.avg == null ? 'var(--text-3)' : col(x.avg) }}>{fmtPct(x.avg)}</td>
+                    <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: x.worst == null ? 'var(--text-3)' : col(x.worst) }}>{fmtPct(x.worst)}</td>
+                    <td style={{ ...td(), whiteSpace: 'normal' }}>
+                      {x.hits.length ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {x.hits.map(h => (
+                            <button key={h.p} onClick={() => { onMonth(h.p); setView('month'); }} title={`Open ${monLabel(h.p)}`}
+                              style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 6, padding: '2px 7px', fontSize: 10.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)' }}>
+                              {monShort(h.p)} · {fmtPct(h.ape)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : <span style={{ fontSize: 11, color: '#059669' }}>Not an outlier in any month at {target}%</span>}
+                    </td>
+                  </tr>
+                ))}
+                {!across.length && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>{q ? 'No item matches the search' : `No outliers at ${target}%`}</td></tr>}
+                {across.length > 500 && <tr><td colSpan={5} style={{ padding: 10, textAlign: 'center', color: 'var(--text-3)', fontSize: 11 }}>Showing 500 of {across.length}. Search to narrow, or download the CSV for all.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>
