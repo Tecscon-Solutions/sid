@@ -409,7 +409,8 @@ function ApeOutliers({ allData, month, onMonth }) {
   const monLabel = p => { const [y, mo] = String(p || '').split('-'); const ns = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return (ns[parseInt(mo)] || mo) + ' ' + y; };
   const col = v => (v > 100 ? '#DC2626' : v > 50 ? '#D97706' : '#059669');
   const pill = active => ({ padding: '4px 11px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)', border: '1px solid', borderColor: active ? 'var(--accent)' : 'var(--border)', background: active ? 'rgba(79,70,229,.06)' : '#fff', color: active ? 'var(--accent)' : 'var(--text-2)' });
-  const setT = v => { const x = Math.max(1, Math.min(500, Math.round(Number(v) || 0))); setTarget(x); setTargetText(String(x)); };
+  // A blank or 0 entry goes back to the last target instead of dropping almost every item.
+  const setT = v => { const n = Math.round(Number(v)); const x = n >= 1 ? Math.min(500, n) : target; setTarget(x); setTargetText(String(x)); };
   const label = { fontSize: 10, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.06em' };
   const stat = (title, value, sub, color) => (
     <div style={{ flex: '1 1 0', minWidth: 150, background: '#FAFBFC', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
