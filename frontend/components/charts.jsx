@@ -398,6 +398,19 @@ function apeOutliersOf(rows, target) {
   return { n, avg: total / n, after: sum / (n - k), k, out: s.slice(0, k), share: total ? (total - sum) / total * 100 : 0, median, total };
 }
 
+/* Which way an outlier missed: the actual came in above the forecast (+, the
+   forecast was too low) or below it (−, the forecast was too high). */
+function apeDirOf(d) {
+  if (d.actualClosingBal == null || d.predictedClosingBal == null) return 'flat';
+  const g = d.actualClosingBal - d.predictedClosingBal;
+  return g > 0 ? 'up' : g < 0 ? 'down' : 'flat';
+}
+const APE_DIR = {
+  up: { sign: '+', word: 'above', label: 'Actual above forecast', color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
+  down: { sign: '−', word: 'below', label: 'Actual below forecast', color: '#B91C1C', bg: '#FEF2F2', border: '#FECACA' },
+  flat: { sign: '', word: 'on', label: 'On forecast', color: '#4B5563', bg: '#F3F4F6', border: '#E5E7EB' },
+};
+
 function ApeOutliers({ allData, month, onMonth }) {
   const [seg, setSeg] = React.useState('hv'); // hv | all
   const [target, setTarget] = React.useState(15);
@@ -426,11 +439,13 @@ function ApeOutliers({ allData, month, onMonth }) {
       const x = it[d.itemCode] || (it[d.itemCode] = { code: d.itemCode, desc: d.description || d.itemCode, isHV: d.isHV, checked: 0, hits: [] });
       x.checked++;
     });
-    Object.entries(byMonth).forEach(([p, r]) => (r ? r.out : []).forEach(d => it[d.itemCode].hits.push({ p, ape: d.ape })));
+    Object.entries(byMonth).forEach(([p, r]) => (r ? r.out : []).forEach(d => it[d.itemCode].hits.push({ p, ape: d.ape, dir: apeDirOf(d) })));
     return Object.values(it).map(x => {
       x.hits.sort((a, b) => (a.p < b.p ? 1 : -1));
       x.avg = x.hits.length ? x.hits.reduce((s, h) => s + h.ape, 0) / x.hits.length : null;
       x.worst = x.hits.length ? Math.max(...x.hits.map(h => h.ape)) : null;
+      x.up = x.hits.filter(h => h.dir === 'up').length;
+      x.down = x.hits.filter(h => h.dir === 'down').length;
       return x;
     });
   }, [rows, byMonth]);
@@ -484,20 +499,32 @@ function ApeOutliers({ allData, month, onMonth }) {
   const nItems = n => (segName ? `${n} ${segName} items` : `${n} items`);
   const nMonths = Object.keys(byMonth).length;
   const r0 = v => (v == null ? '' : Math.round(v));
+  const signed = v => (v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(Math.round(v)).toLocaleString('en-US'));
+  const legend = (
+    <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', fontSize: 11, color: 'var(--text-2)', marginBottom: 8 }}>
+      {['up', 'down'].map(k => (
+        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ border: `1px solid ${APE_DIR[k].border}`, background: APE_DIR[k].bg, color: APE_DIR[k].color, borderRadius: 5, padding: '0 6px', fontWeight: 700, fontFamily: 'var(--mono)' }}>{APE_DIR[k].sign}</span>
+          {APE_DIR[k].label}{k === 'up' ? ' (forecast too low)' : ' (forecast too high)'}
+        </span>
+      ))}
+    </div>
+  );
   const exportCsv = () => {
     if (view === 'month') {
       if (!res) return;
-      const head = ['Month', 'Item Code', 'Item', 'High Value', 'Prev Bal', 'Pred. Bal', 'Actual Bal', 'Missed By', 'APE %', 'Share of Month Error %', 'Outlier Months', 'Why'];
+      const head = ['Month', 'Item Code', 'Item', 'High Value', 'Prev Bal', 'Pred. Bal', 'Actual Bal', 'Actual minus Pred.', 'Direction', 'APE %', 'Share of Month Error %', 'Outlier Months', 'Why'];
       const body = res.out.map(d => {
         const w = whyOf(d), x = itemByCode[d.itemCode];
-        return [m, d.itemCode, d.description, d.isHV ? 'Yes' : 'No', r0(d.prevClosingBal), r0(d.predictedClosingBal), r0(d.actualClosingBal), r0(w.miss),
+        return [m, d.itemCode, d.description, d.isHV ? 'Yes' : 'No', r0(d.prevClosingBal), r0(d.predictedClosingBal), r0(d.actualClosingBal),
+          d.actualClosingBal != null && d.predictedClosingBal != null ? r0(d.actualClosingBal - d.predictedClosingBal) : '', APE_DIR[apeDirOf(d)].label,
           d.ape.toFixed(1), (res.total ? d.ape / res.total * 100 : 0).toFixed(1), x ? `${x.hits.length} of ${x.checked}` : '', w.why];
       });
       const note = `Target APE ${target}%. ${monLabel(m)}, ${nItems(res.n)}: average APE ${res.avg.toFixed(1)}%, without these ${res.k} outliers ${res.after.toFixed(1)}%, median ${res.median.toFixed(1)}%.`;
       downloadCsv([[note], head, ...body], `ape_outliers_${m}_${seg}_target${target}.csv`);
     } else {
-      const head = ['Item Code', 'Item', 'High Value', 'Months as Outlier', 'Months with Actuals', 'Outlier Months (APE %)', 'Avg APE When Outlier %', 'Worst APE %'];
-      const body = across.map(x => [x.code, x.desc, x.isHV ? 'Yes' : 'No', x.hits.length, x.checked, x.hits.map(h => `${h.p} (${Math.round(h.ape)}%)`).join('; '),
+      const head = ['Item Code', 'Item', 'High Value', 'Months as Outlier', 'Months Actual Above Forecast', 'Months Actual Below Forecast', 'Months with Actuals', 'Outlier Months (APE %, actual vs forecast)', 'Avg APE When Outlier %', 'Worst APE %'];
+      const body = across.map(x => [x.code, x.desc, x.isHV ? 'Yes' : 'No', x.hits.length, x.up, x.down, x.checked, x.hits.map(h => `${h.p} (${Math.round(h.ape)}%, ${APE_DIR[h.dir].word})`).join('; '),
         x.avg == null ? '' : x.avg.toFixed(1), x.worst == null ? '' : x.worst.toFixed(1)]);
       const note = `Target APE ${target}%, ${segName || 'all'} items. Outliers found month by month with the same rule, ${nMonths} months with actuals.`;
       downloadCsv([[note], head, ...body], `repeat_outliers_${seg}_target${target}${q.trim() ? '_search' : ''}.csv`);
@@ -563,6 +590,7 @@ function ApeOutliers({ allData, month, onMonth }) {
             {stat('Median APE', fmtPct(res.median), 'half the items are within this', col(res.median))}
             {stat('Outliers’ share of error', res.k ? fmtPct(res.share) : '—', res.k ? `${res.k} of ${res.n} items (${(res.k / res.n * 100).toFixed(0)}%)` : 'no outliers at this target', res.share > 50 ? '#DC2626' : 'var(--text)')}
           </div>
+          {res.k > 0 && legend}
           {res.k > 0 && (
             <div className="h-scroller" style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 360, overflow: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
@@ -572,7 +600,7 @@ function ApeOutliers({ allData, month, onMonth }) {
                     <th style={th('right')}>Prev bal</th>
                     <th style={th('right')}>Pred. bal</th>
                     <th style={th('right')}>Actual bal</th>
-                    <th style={th('right')}>Missed by</th>
+                    <th style={th('right')} title="Actual balance minus predicted balance">Actual vs pred.</th>
                     <th style={th('right')}>APE</th>
                     <th style={th()}>Share of the month's error</th>
                     <th style={th('right')}>Outlier in</th>
@@ -589,7 +617,11 @@ function ApeOutliers({ allData, month, onMonth }) {
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: 'var(--text-2)' }}>{fmtN(d.prevClosingBal)}</td>
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700 }}>{fmtN(d.predictedClosingBal)}</td>
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(d.actualClosingBal)}</td>
-                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(w.miss)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700 }}>
+                          <span title={APE_DIR[apeDirOf(d)].label} style={{ border: `1px solid ${APE_DIR[apeDirOf(d)].border}`, background: APE_DIR[apeDirOf(d)].bg, color: APE_DIR[apeDirOf(d)].color, borderRadius: 6, padding: '1px 7px' }}>
+                            {d.actualClosingBal != null && d.predictedClosingBal != null ? signed(d.actualClosingBal - d.predictedClosingBal) : '—'}
+                          </span>
+                        </td>
                         <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700, color: col(d.ape) }}>{fmtPct(d.ape)}</td>
                         <td style={td()}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -624,6 +656,7 @@ function ApeOutliers({ allData, month, onMonth }) {
             {stat('Repeat outliers', repeat, 'outliers in 2 or more months', repeat ? '#DC2626' : 'var(--text)')}
             {stat('Most often', top && top.hits.length ? `${top.hits.length} months` : '—', top && top.hits.length ? `${top.desc} (${top.code})` : 'no outliers at this target')}
           </div>
+          {legend}
           <div className="h-scroller" style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 420, overflow: 'auto' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
@@ -639,16 +672,25 @@ function ApeOutliers({ allData, month, onMonth }) {
                 {across.slice(0, 500).map(x => (
                   <tr key={x.code}>
                     {itemCell(x.code, x.desc, x.isHV)}
-                    <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700, color: x.hits.length > 1 ? '#DC2626' : x.hits.length ? 'var(--text)' : '#059669' }}>{x.hits.length} of {x.checked} months</td>
+                    <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700, color: x.hits.length > 1 ? '#DC2626' : x.hits.length ? 'var(--text)' : '#059669' }}>
+                      <div>{x.hits.length} of {x.checked} months</div>
+                      {x.hits.length > 0 && (
+                        <div style={{ fontSize: 10.5, fontWeight: 600, marginTop: 2 }}>
+                          {x.up > 0 && <span style={{ color: APE_DIR.up.color }}>+{x.up} above</span>}
+                          {x.up > 0 && x.down > 0 && <span style={{ color: 'var(--text-3)' }}> · </span>}
+                          {x.down > 0 && <span style={{ color: APE_DIR.down.color }}>{'−'}{x.down} below</span>}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: x.avg == null ? 'var(--text-3)' : col(x.avg) }}>{fmtPct(x.avg)}</td>
                     <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: x.worst == null ? 'var(--text-3)' : col(x.worst) }}>{fmtPct(x.worst)}</td>
                     <td style={{ ...td(), whiteSpace: 'normal' }}>
                       {x.hits.length ? (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                           {x.hits.map(h => (
-                            <button key={h.p} onClick={() => { onMonth(h.p); setView('month'); }} title={`Open ${monLabel(h.p)}`}
-                              style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 6, padding: '2px 7px', fontSize: 10.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)' }}>
-                              {monShort(h.p)} · {fmtPct(h.ape)}
+                            <button key={h.p} onClick={() => { onMonth(h.p); setView('month'); }} title={`${APE_DIR[h.dir].label}, ${monLabel(h.p)}. Click to open it.`}
+                              style={{ border: `1px solid ${APE_DIR[h.dir].border}`, background: APE_DIR[h.dir].bg, color: APE_DIR[h.dir].color, borderRadius: 6, padding: '2px 7px', fontSize: 10.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)' }}>
+                              {APE_DIR[h.dir].sign} {monShort(h.p)} · {fmtPct(h.ape)}
                             </button>
                           ))}
                         </div>
