@@ -294,7 +294,7 @@ function BalanceScatter({ data }) {
 }
 
 /* ===== MODEL ACCURACY TABLE — wired to real MAPE summary ===== */
-function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape' }) {
+function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape', selected, onPick }) {
   const isApe = metric === 'ape';
   const metricLabel = isApe ? 'APE' : 'MAPE';
   // Per-period APE = mean of that month's individual item forecast errors (all
@@ -331,6 +331,7 @@ function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape'
         {isApe
           ? 'Average APE (absolute % error) of each month’s individual item forecasts — all items and HV. Lower = better.'
           : 'Model accuracy summary from the MAPE_Summary sheet. Lower MAPE = better accuracy.'}
+        {onPick && ' Click a month to see its outliers below.'}
       </div>
       {/* Both axes scroll. Height is matched to the Portfolio chart next to
           us (~340px usable: SVG padT 14 + cH 280 + padB 44 + chrome). */}
@@ -354,8 +355,9 @@ function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape'
               const eAll = isApe ? (ap ? ap.all : null) : r.mapeAll;
               const eHV = isApe ? (ap ? ap.hv : null) : r.mapeHV;
               return (
-              <tr key={i}>
-                <td style={{ ...tdS, fontFamily: 'var(--mono)', fontWeight: 700 }}>{r.period}</td>
+              <tr key={i} onClick={onPick && ap ? () => onPick(r.period) : undefined}
+                style={{ cursor: onPick && ap ? 'pointer' : 'default', background: selected === r.period ? 'rgba(79,70,229,.06)' : 'transparent' }}>
+                <td style={{ ...tdS, fontFamily: 'var(--mono)', fontWeight: 700, color: selected === r.period ? 'var(--accent)' : undefined }}>{r.period}</td>
                 <td style={{ ...tdS, fontWeight: 500 }}>{r.model}</td>
                 <td style={{ ...tdS, textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 700, color: mapeColor(eAll) }}>
                   {eAll != null ? eAll.toFixed(1) + '%' : '—'}
@@ -373,6 +375,143 @@ function ModelAccuracyTable({ periodGroups, modelLabel, allData, metric = 'mape'
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/* ===== APE OUTLIERS — which items pull a month's average APE up =====
+   A month's APE is the plain average of its item errors, so one item whose
+   actual balance fell to 2 (a 30-unit miss = 1500%) can outweigh 70 good
+   ones. Pick a target average; the items with the largest errors are left out
+   one by one until the rest meet it, and are listed as the outliers. */
+function ApeOutliers({ allData, month, onMonth }) {
+  const [seg, setSeg] = React.useState('hv'); // hv | all
+  const [target, setTarget] = React.useState(15);
+  const [targetText, setTargetText] = React.useState('15');
+  const months = React.useMemo(() => [...new Set((allData || []).filter(d => d.ape != null).map(d => d.period))].sort().reverse(), [allData]);
+  const m = months.includes(month) ? month : months[0];
+
+  const res = React.useMemo(() => {
+    const rows = (allData || []).filter(d => d.period === m && d.ape != null && (seg === 'all' || d.isHV))
+      .slice().sort((a, b) => b.ape - a.ape);
+    const n = rows.length;
+    if (!n) return null;
+    const total = rows.reduce((s, d) => s + d.ape, 0);
+    let sum = total, k = 0;
+    while (k < n - 1 && sum / (n - k) > target) { sum -= rows[k].ape; k++; }
+    const sorted = rows.map(d => d.ape).sort((a, b) => a - b);
+    const median = n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+    return { n, avg: total / n, after: sum / (n - k), k, out: rows.slice(0, k), share: total ? (total - sum) / total * 100 : 0, median, total };
+  }, [allData, m, seg, target]);
+
+  const fmtPct = v => (v == null ? '—' : (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1)) + '%');
+  const fmtN = v => (v == null ? '—' : Math.round(v).toLocaleString('en-US'));
+  const monLabel = p => { const [y, mo] = String(p || '').split('-'); const ns = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return (ns[parseInt(mo)] || mo) + ' ' + y; };
+  const col = v => (v > 100 ? '#DC2626' : v > 50 ? '#D97706' : '#059669');
+  const pill = active => ({ padding: '4px 11px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font)', border: '1px solid', borderColor: active ? 'var(--accent)' : 'var(--border)', background: active ? 'rgba(79,70,229,.06)' : '#fff', color: active ? 'var(--accent)' : 'var(--text-2)' });
+  const setT = v => { const x = Math.max(1, Math.min(500, Math.round(Number(v) || 0))); setTarget(x); setTargetText(String(x)); };
+  const label = { fontSize: 10, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.06em' };
+  const stat = (title, value, sub, color) => (
+    <div style={{ flex: '1 1 0', minWidth: 150, background: '#FAFBFC', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
+      <div style={label}>{title}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: color || 'var(--text)', marginTop: 4 }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+  const th = a => ({ padding: '7px 10px', textAlign: a || 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '2px solid var(--border)', background: '#FAFBFC', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1 });
+  const td = a => ({ padding: '7px 10px', textAlign: a || 'left', fontSize: 11.5, borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' });
+
+  if (!months.length) return <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No month has actuals yet.</div>;
+  const segName = seg === 'hv' ? 'high-value' : '';
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={label}>Month</span>
+          <select value={m} onChange={e => onMonth(e.target.value)} style={{ padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border)', fontSize: 12, fontFamily: 'var(--font)', fontWeight: 600, color: 'var(--text)', background: '#fff' }}>
+            {months.map(p => <option key={p} value={p}>{monLabel(p)}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={label}>Items</span>
+          <button onClick={() => setSeg('hv')} style={pill(seg === 'hv')}>★ High-value</button>
+          <button onClick={() => setSeg('all')} style={pill(seg === 'all')}>All</button>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={label}>Target APE</span>
+          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--accent)', borderRadius: 7, overflow: 'hidden' }}>
+            <input value={targetText} onChange={e => setTargetText(e.target.value.replace(/[^0-9]/g, ''))} onBlur={e => setT(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') setT(e.currentTarget.value); }}
+              style={{ width: 44, padding: '4px 6px', border: 'none', outline: 'none', fontSize: 12, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--accent)', textAlign: 'right' }} />
+            <span style={{ padding: '0 8px 0 2px', fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>%</span>
+          </div>
+          {[10, 15, 20, 30, 50].map(v => <button key={v} onClick={() => setT(v)} style={pill(target === v)}>{v}%</button>)}
+        </div>
+      </div>
+
+      {!res ? <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No {segName} items with actuals in {monLabel(m)}.</div> : (
+        <>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+            {stat('Average APE', fmtPct(res.avg), `${monLabel(m)}, ${res.n} ${segName} items`, col(res.avg))}
+            {stat(`Without ${res.k} outlier${res.k === 1 ? '' : 's'}`, fmtPct(res.after), res.k ? `the other ${res.n - res.k} items` : `already at or under ${target}%`, col(res.after))}
+            {stat('Median APE', fmtPct(res.median), `half the items are within this`, col(res.median))}
+            {stat('Outliers’ share of error', res.k ? fmtPct(res.share) : '—', res.k ? `${res.k} of ${res.n} items (${(res.k / res.n * 100).toFixed(0)}%)` : 'no outliers at this target', res.share > 50 ? '#DC2626' : 'var(--text)')}
+          </div>
+
+          {res.k > 0 && (
+            <div className="h-scroller" style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 360, overflow: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={th()}>Outlier item</th>
+                    <th style={th('right')}>Prev bal</th>
+                    <th style={th('right')}>Pred. bal</th>
+                    <th style={th('right')}>Actual bal</th>
+                    <th style={th('right')}>Missed by</th>
+                    <th style={th('right')}>APE</th>
+                    <th style={th()}>Share of the month's error</th>
+                    <th style={th()}>Why the % is high</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {res.out.map(d => {
+                    const miss = d.predictedClosingBal != null && d.actualClosingBal != null ? Math.abs(d.predictedClosingBal - d.actualClosingBal) : null;
+                    const sh = res.total ? d.ape / res.total * 100 : 0;
+                    const act = d.actualClosingBal;
+                    const why = act != null && act <= 20 ? `Actual only ${fmtN(act)}, so a ${fmtN(miss)}-unit miss reads as ${fmtPct(d.ape)}`
+                      : d.prevClosingBal != null && act != null && act < d.prevClosingBal * 0.6 ? `Balance dropped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large return`
+                      : d.prevClosingBal != null && act != null && act > d.prevClosingBal * 1.6 ? `Balance jumped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large delivery`
+                      : `Missed by ${fmtN(miss)} units`;
+                    return (
+                      <tr key={d.itemCode}>
+                        <td style={{ ...td(), whiteSpace: 'normal', minWidth: 180 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 12 }}>{d.isHV && <span style={{ color: 'var(--accent)' }}>★ </span>}{d.description}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>{d.itemCode}</div>
+                        </td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)', color: 'var(--text-2)' }}>{fmtN(d.prevClosingBal)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700 }}>{fmtN(d.predictedClosingBal)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(act)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)' }}>{fmtN(miss)}</td>
+                        <td style={{ ...td('right'), fontFamily: 'var(--mono)', fontWeight: 700, color: col(d.ape) }}>{fmtPct(d.ape)}</td>
+                        <td style={td()}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 110, height: 7, borderRadius: 4, background: '#F3F4F6', overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.min(100, sh)}%`, height: '100%', background: '#DC2626', opacity: .75 }} />
+                            </div>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-2)' }}>{sh.toFixed(0)}%</span>
+                          </div>
+                        </td>
+                        <td style={{ ...td(), whiteSpace: 'normal', color: 'var(--text-2)', minWidth: 200 }}>{why}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
