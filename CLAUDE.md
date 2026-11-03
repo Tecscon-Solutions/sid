@@ -1,6 +1,6 @@
 # Forecast Intel (Sonu, Tecscon)
 
-Streamlit app (`app.py`) serving a React/Babel-standalone UI from `frontend/` inside one iframe. Data comes from Supabase (`forecast_runs`, `forecast_predictions`). The live app is forecast-intel.streamlit.app and deploys from `main`.
+Streamlit app (`app.py`) serving a React/Babel-standalone UI from `frontend/` inside one iframe. Data comes from Supabase (`forecast_runs`, `forecast_predictions`). The live app Sonu and his client use is scafolpred.streamlit.app (forecast-intel.streamlit.app is only a second copy); both deploy from `main`. Check changes on scafolpred.
 
 ## Working loop
 
