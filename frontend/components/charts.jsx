@@ -437,7 +437,9 @@ function ApeOutliers({ allData, month, onMonth }) {
   const itemByCode = React.useMemo(() => Object.fromEntries(items.map(x => [x.code, x])), [items]);
   const across = React.useMemo(() => {
     const s = q.trim().toLowerCase();
-    const a = s ? items.filter(x => (x.desc + ' ' + x.code).toLowerCase().includes(s)) : items.filter(x => x.hits.length);
+    // An exact item code (typed, or from the "Outlier in" link) shows only that item.
+    const exact = s && items.filter(x => x.code.toLowerCase() === s);
+    const a = !s ? items.filter(x => x.hits.length) : exact.length ? exact : items.filter(x => (x.desc + ' ' + x.code).toLowerCase().includes(s));
     return a.slice().sort((x, y) => y.hits.length - x.hits.length || (y.avg || 0) - (x.avg || 0) || (x.desc < y.desc ? -1 : 1));
   }, [items, q]);
   const repeat = items.filter(x => x.hits.length >= 2).length;
@@ -458,7 +460,7 @@ function ApeOutliers({ allData, month, onMonth }) {
     <div style={{ flex: '1 1 0', minWidth: 150, background: '#FAFBFC', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
       <div style={label}>{title}</div>
       <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: color || 'var(--text)', marginTop: 4 }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{sub}</div>
     </div>
   );
   const th = a => ({ padding: '7px 10px', textAlign: a || 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '2px solid var(--border)', background: '#FAFBFC', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1 });
@@ -479,6 +481,7 @@ function ApeOutliers({ allData, month, onMonth }) {
     return { miss, why };
   };
   const segName = seg === 'hv' ? 'high-value' : '';
+  const nItems = n => (segName ? `${n} ${segName} items` : `${n} items`);
   const nMonths = Object.keys(byMonth).length;
   const r0 = v => (v == null ? '' : Math.round(v));
   const exportCsv = () => {
@@ -490,7 +493,7 @@ function ApeOutliers({ allData, month, onMonth }) {
         return [m, d.itemCode, d.description, d.isHV ? 'Yes' : 'No', r0(d.prevClosingBal), r0(d.predictedClosingBal), r0(d.actualClosingBal), r0(w.miss),
           d.ape.toFixed(1), (res.total ? d.ape / res.total * 100 : 0).toFixed(1), x ? `${x.hits.length} of ${x.checked}` : '', w.why];
       });
-      const note = `Target APE ${target}%. ${monLabel(m)}, ${res.n} ${segName} items: average APE ${res.avg.toFixed(1)}%, without these ${res.k} outliers ${res.after.toFixed(1)}%, median ${res.median.toFixed(1)}%.`;
+      const note = `Target APE ${target}%. ${monLabel(m)}, ${nItems(res.n)}: average APE ${res.avg.toFixed(1)}%, without these ${res.k} outliers ${res.after.toFixed(1)}%, median ${res.median.toFixed(1)}%.`;
       downloadCsv([[note], head, ...body], `ape_outliers_${m}_${seg}_target${target}.csv`);
     } else {
       const head = ['Item Code', 'Item', 'High Value', 'Months as Outlier', 'Months with Actuals', 'Outlier Months (APE %)', 'Avg APE When Outlier %', 'Worst APE %'];
@@ -552,10 +555,10 @@ function ApeOutliers({ allData, month, onMonth }) {
           style={{ ...pill(false), marginLeft: 'auto', color: 'var(--accent)', borderColor: 'var(--accent)' }}>Download CSV</button>
       </div>
 
-      {view === 'month' && (!res ? <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No {segName} items with actuals in {monLabel(m)}.</div> : (
+      {view === 'month' && (!res ? <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 12 }}>No {segName ? segName + ' ' : ''}items with actuals in {monLabel(m)}.</div> : (
         <>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-            {stat('Average APE', fmtPct(res.avg), `${monLabel(m)}, ${res.n} ${segName} items`, col(res.avg))}
+            {stat('Average APE', fmtPct(res.avg), `${monLabel(m)}, ${nItems(res.n)}`, col(res.avg))}
             {stat(`Without ${res.k} outlier${res.k === 1 ? '' : 's'}`, fmtPct(res.after), res.k ? `the other ${res.n - res.k} items` : `already at or under ${target}%`, col(res.after))}
             {stat('Median APE', fmtPct(res.median), 'half the items are within this', col(res.median))}
             {stat('Outliers’ share of error', res.k ? fmtPct(res.share) : '—', res.k ? `${res.k} of ${res.n} items (${(res.k / res.n * 100).toFixed(0)}%)` : 'no outliers at this target', res.share > 50 ? '#DC2626' : 'var(--text)')}
@@ -617,7 +620,7 @@ function ApeOutliers({ allData, month, onMonth }) {
         <>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
             {stat('Months checked', nMonths, `every month with actuals`)}
-            {stat('Ever an outlier', ever, `of ${items.length} ${segName} items, in 1+ months`)}
+            {stat('Ever an outlier', ever, `of ${nItems(items.length)}, in 1+ months`)}
             {stat('Repeat outliers', repeat, 'outliers in 2 or more months', repeat ? '#DC2626' : 'var(--text)')}
             {stat('Most often', top && top.hits.length ? `${top.hits.length} months` : '—', top && top.hits.length ? `${top.desc} (${top.code})` : 'no outliers at this target')}
           </div>
