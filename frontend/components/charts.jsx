@@ -487,12 +487,24 @@ function ApeOutliers({ allData, month, onMonth }) {
     </td>
   );
   const whyOf = d => {
-    const miss = d.predictedClosingBal != null && d.actualClosingBal != null ? Math.abs(d.predictedClosingBal - d.actualClosingBal) : null;
-    const act = d.actualClosingBal;
-    const why = act != null && act <= 20 ? `Actual only ${fmtN(act)}, so a ${fmtN(miss)}-unit miss reads as ${fmtPct(d.ape)}`
-      : d.prevClosingBal != null && act != null && act < d.prevClosingBal * 0.6 ? `Balance dropped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large return`
-      : d.prevClosingBal != null && act != null && act > d.prevClosingBal * 1.6 ? `Balance jumped from ${fmtN(d.prevClosingBal)} to ${fmtN(act)}, a large delivery`
-      : `Missed by ${fmtN(miss)} units`;
+    const p = d.prevClosingBal, f = d.predictedClosingBal, a = d.actualClosingBal;
+    const miss = f != null && a != null ? Math.abs(f - a) : null;
+    let why = `Missed by ${fmtN(miss)} units`;
+    if (a != null && a < 0 && a >= -20) why = `Actual is ${fmtN(a)}, just below zero, so a ${fmtN(miss)}-unit miss reads as ${fmtPct(d.ape)}`;
+    else if (a != null && a < 0) why = `Actual is ${fmtN(a)}, below zero, forecast expected ${fmtN(f)}`;
+    else if (a != null && a <= 20) why = `Actual only ${fmtN(a)}, so a ${fmtN(miss)}-unit miss reads as ${fmtPct(d.ape)}`;
+    else if (p != null && f != null && a != null) {
+      // Compare what the balance did (prev to actual) with what the forecast said (prev to pred).
+      // A change within 10% of the largest of the three (at least 2 units) counts as "no change".
+      const tol = Math.max(2, 0.1 * Math.max(Math.abs(p), Math.abs(f), Math.abs(a)));
+      const mv = a - p, fm = f - p;
+      const aFlat = Math.abs(mv) <= tol, fFlat = Math.abs(fm) <= tol;
+      const fWord = `a ${fm > 0 ? 'rise' : 'drop'} to ${fmtN(f)}`;
+      if (aFlat && !fFlat) why = (Math.round(mv) === 0 ? `Balance stayed at ${fmtN(a)}` : `Balance barely moved, ${fmtN(p)} to ${fmtN(a)}`) + `, forecast expected ${fWord}`;
+      else if (!aFlat && fFlat) why = `Balance ${mv > 0 ? 'rose' : 'fell'} from ${fmtN(p)} to ${fmtN(a)}, a ${mv > 0 ? 'delivery' : 'return'} the forecast did not expect`;
+      else if (!aFlat && (mv > 0) !== (fm > 0)) why = `Forecast expected ${fWord}, balance ${mv > 0 ? 'rose' : 'fell'} to ${fmtN(a)} instead`;
+      else if (!aFlat) why = `Balance ${mv > 0 ? 'rose' : 'fell'} from ${fmtN(p)} to ${fmtN(a)}, forecast expected ${fmtN(f)}`;
+    }
     return { miss, why };
   };
   const segName = seg === 'hv' ? 'high-value' : '';
